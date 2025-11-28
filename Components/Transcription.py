@@ -12,6 +12,7 @@ def transcribeAudio(audio_path):
         segments = list(segments)
         # print(segments)
         extracted_texts = [[segment.text, segment.start, segment.end] for segment in segments]
+        print(f"✓ Transcription complete: {len(extracted_texts)} segments extracted")
         return extracted_texts
     except Exception as e:
         print("Transcription Error:", e)

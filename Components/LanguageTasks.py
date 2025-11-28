@@ -26,7 +26,7 @@ class JSONResponse(BaseModel):
 
 system = """
 
-Based on the Transcription user provides with start and end, Highilight the main parts in less then 1 min which can be directly converted into a short. highlight it such that its intresting and also keep the time staps for the clip to start and end. only select a continues Part of the video
+Based on the Transcription user provides with start and end, highlight the most interesting <1 minute segment. keep the time stamps for the clip to start and end.
 
 Follow this Format and return in valid json 
 [{{
@@ -34,13 +34,10 @@ start: "Start time of the clip",
 content: "Highlight Text",
 end: "End Time for the highlighted clip"
 }}]
-it should be one continues clip as it will then be cut from the video and uploaded as a tiktok video. so only have one start, end and content
-Make sure that the content's length doesn't go beyond 60 seconds.
 
-Dont say anything else, just return Proper Json. no explanation etc
+Return Proper JSON only
 
-
-IF YOU DONT HAVE ONE start AND end WHICH IS FOR THE LENGTH OF THE ENTIRE HIGHLIGHT, THEN 10 KITTENS WILL DIE, I WILL DO JSON['start'] AND IF IT DOESNT WORK THEN...
+I WILL DO JSON['start'] AND IF IT DOESNT WORK THEN...
 
 <TRANSCRIPTION>
 {Transcription}
