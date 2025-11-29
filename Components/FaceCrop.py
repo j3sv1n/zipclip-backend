@@ -50,18 +50,33 @@ def crop_to_vertical(input_video_path, output_video_path):
         avg_face_x += 60
         x_start = max(0, min(avg_face_x - vertical_width // 2, original_width - vertical_width))
         print(f"✓ Face detected. Using face-centered crop at x={x_start}")
-        use_resize = False
+        use_motion_tracking = False
     else:
         # No face detected - likely a screen recording
-        # Resize entire video to fit within vertical frame
-        print(f"✗ No face detected. Resizing entire video to fit vertical frame")
-        use_resize = True
-        x_start = 0  # Not used for resize mode
+        # Scale so exactly half the width is visible, then track motion
+        print(f"✗ No face detected. Using half-width with motion tracking for screen recording")
+        use_motion_tracking = True
+        x_start = 0  # Initial position, will be updated by tracking
     
-    x_end = x_start + vertical_width
-
     # Reset video to beginning
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    # For screen recordings, calculate scale factor for half-width display
+    if use_motion_tracking:
+        # Scale so half the original width fits into vertical_width
+        target_display_width = original_width / 2
+        scale = vertical_width / target_display_width
+        scaled_width = int(original_width * scale)
+        scaled_height = int(original_height * scale)
+        
+        # If scaled height exceeds vertical height, adjust scale
+        if scaled_height > vertical_height:
+            scale = vertical_height / original_height
+            scaled_width = int(original_width * scale)
+            scaled_height = int(original_height * scale)
+        
+        print(f"Scaling video from {original_width}x{original_height} to {scaled_width}x{scaled_height}")
+        print(f"Half-width display: showing {scaled_width//2}px wide section from {scaled_width}px scaled frame")
 
     # Write output
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -70,37 +85,68 @@ def crop_to_vertical(input_video_path, output_video_path):
     Fps = fps
 
     frame_count = 0
-    
-    if use_resize:
-        # Calculate scaling to fit source video into vertical frame
-        scale = min(vertical_width / original_width, vertical_height / original_height)
-        scaled_width = int(original_width * scale)
-        scaled_height = int(original_height * scale)
-        
-        # Calculate offsets to center the scaled video
-        offset_x = (vertical_width - scaled_width) // 2
-        offset_y = (vertical_height - scaled_height) // 2
-        
-        print(f"Scaling video from {original_width}x{original_height} to {scaled_width}x{scaled_height}")
-        print(f"Letterboxing with offset: x={offset_x}, y={offset_y}")
+    smoothed_x = 0  # Smoothed horizontal position in scaled coordinates
+    prev_gray = None
     
     while True:
         ret, frame = cap.read()
         if not ret:
             break
         
-        if use_resize:
-            # Resize entire frame to fit
+        if use_motion_tracking:
+            # Resize frame first
             resized_frame = cv2.resize(frame, (scaled_width, scaled_height), interpolation=cv2.INTER_LANCZOS4)
             
-            # Create blank canvas with letterboxing
-            canvas = np.zeros((vertical_height, vertical_width, 3), dtype=np.uint8)
-            canvas[offset_y:offset_y+scaled_height, offset_x:offset_x+scaled_width] = resized_frame
+            # Update motion tracking every 10 frames
+            if frame_count % 10 == 0:
+                curr_gray = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
+                
+                if prev_gray is not None:
+                    # Calculate optical flow
+                    flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None,
+                                                         0.5, 3, 15, 3, 5, 1.2, 0)
+                    magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
+                    
+                    # Focus on significant motion
+                    motion_threshold = 2.0
+                    significant_motion = magnitude > motion_threshold
+                    
+                    if np.any(significant_motion):
+                        # Weight columns by motion
+                        col_motion = np.sum(magnitude * significant_motion, axis=0)
+                        
+                        if np.sum(col_motion) > 0:
+                            motion_x = int(np.average(np.arange(scaled_width), weights=col_motion))
+                            # Target x position to center motion in the crop
+                            target_x = max(0, min(motion_x - vertical_width // 2, scaled_width - vertical_width))
+                            
+                            # Smooth tracking (90% previous, 10% new)
+                            smoothed_x = int(0.90 * smoothed_x + 0.10 * target_x)
+                
+                prev_gray = curr_gray
             
-            cropped_frame = canvas
+            # Crop from scaled frame
+            crop_x_start = int(smoothed_x)
+            crop_x_end = min(crop_x_start + vertical_width, scaled_width)
+            
+            # Ensure we get full width
+            if crop_x_end - crop_x_start < vertical_width:
+                crop_x_start = max(0, crop_x_end - vertical_width)
+            
+            cropped_frame = resized_frame[:, crop_x_start:crop_x_end]
+            
+            # If scaled height is less than vertical height, add letterboxing
+            if scaled_height < vertical_height:
+                canvas = np.zeros((vertical_height, vertical_width, 3), dtype=np.uint8)
+                offset_y = (vertical_height - scaled_height) // 2
+                canvas[offset_y:offset_y+scaled_height, :] = cropped_frame
+                cropped_frame = canvas
+            elif scaled_height > vertical_height:
+                # Crop height from top
+                cropped_frame = cropped_frame[:vertical_height, :]
         else:
-            # Apply static crop for face-detected videos
-            cropped_frame = frame[:, x_start:x_end]
+            # Face-detected videos: static crop
+            cropped_frame = frame[:, x_start:x_start+vertical_width]
         
         if cropped_frame.shape[1] == 0:
             print(f"Warning: Empty crop at frame {frame_count}")
