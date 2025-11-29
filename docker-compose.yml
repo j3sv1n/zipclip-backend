@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  youtube-shorts-generator:
+    build: .
+    image: ai-youtube-shorts-generator:latest
+    container_name: youtube-shorts-generator
+    
+    # Enable GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    
+    # Environment variables
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    
+    # Mount .env file for OpenAI API key
+    env_file:
+      - .env
+    
+    # Mount volumes for input/output
+    volumes:
+      - ./videos:/app/videos          # Input videos
+      - ./output:/app/output          # Output directory
+      - ./.env:/app/.env:ro           # OpenAI API key (read-only)
+    
+    # Interactive mode for URL input
+    stdin_open: true
+    tty: true
+    
+    # Command can be overridden
+    # Example: docker-compose run youtube-shorts-generator ./run.sh "https://youtu.be/VIDEO_ID"
+    command: ./run.sh
