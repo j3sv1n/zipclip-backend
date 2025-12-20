@@ -239,6 +239,139 @@ def convert_scenes_to_segments(scenes):
         return []
 
 
+def analyze_scenes_with_vision(video_path, scenes):
+    """
+    Extract key frames from each scene and analyze them with vision AI.
+    This provides rich visual descriptions of what's in each scene.
+    
+    Args:
+        video_path: Path to the video file
+        scenes: List of (start_time, end_time) tuples
+    
+    Returns:
+        List of dicts with scene info and visual analysis:
+        [
+            {
+                'scene_index': int,
+                'scene_start': float,
+                'scene_end': float,
+                'duration': float,
+                'frame_description': str (AI analysis of what's in the scene)
+            },
+            ...
+        ]
+    """
+    try:
+        from moviepy.editor import VideoFileClip
+        import tempfile
+        import os as os_module
+        
+        print("Analyzing scene content with vision AI...")
+        
+        video = VideoFileClip(video_path)
+        scene_analysis = []
+        
+        for scene_idx, (scene_start, scene_end) in enumerate(scenes):
+            try:
+                # Extract frame from middle of scene for analysis
+                frame_time = scene_start + (scene_end - scene_start) / 2
+                frame = video.get_frame(frame_time)
+                
+                # Save frame temporarily
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                    from PIL import Image
+                    img = Image.fromarray((frame * 255).astype('uint8'))
+                    img.save(tmp_file.name)
+                    temp_frame_path = tmp_file.name
+                
+                # Analyze frame with vision API
+                frame_description = analyze_frame_with_gpt(temp_frame_path)
+                
+                # Clean up temp file
+                os_module.unlink(temp_frame_path)
+                
+                duration = scene_end - scene_start
+                scene_analysis.append({
+                    'scene_index': scene_idx,
+                    'scene_start': scene_start,
+                    'scene_end': scene_end,
+                    'duration': duration,
+                    'frame_description': frame_description
+                })
+                
+                print(f"  Scene {scene_idx + 1}: {frame_description}")
+                
+            except Exception as e:
+                print(f"  Warning: Could not analyze scene {scene_idx + 1}: {e}")
+                # Fallback to basic description
+                duration = scene_end - scene_start
+                scene_analysis.append({
+                    'scene_index': scene_idx,
+                    'scene_start': scene_start,
+                    'scene_end': scene_end,
+                    'duration': duration,
+                    'frame_description': f"Scene with duration {duration:.1f}s"
+                })
+                continue
+        
+        video.close()
+        
+        print(f"✓ Analyzed {len(scene_analysis)} scenes with vision AI\n")
+        return scene_analysis
+        
+    except Exception as e:
+        print(f"Error analyzing scenes with vision: {e}")
+        print("Falling back to basic scene analysis")
+        return convert_scenes_to_segments(scenes)
+
+
+def analyze_frame_with_gpt(frame_path):
+    """
+    Use GPT-4 Vision to analyze a frame and describe what's happening.
+    
+    Args:
+        frame_path: Path to the frame image
+    
+    Returns:
+        Description of what's in the frame
+    """
+    try:
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+        import base64
+        
+        # Read and encode the image
+        with open(frame_path, 'rb') as f:
+            image_data = base64.standard_b64encode(f.read()).decode('utf-8')
+        
+        llm = ChatOpenAI(model="gpt-4o", temperature=0.7)
+        
+        message = HumanMessage(
+            content=[
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_data}",
+                    },
+                },
+                {
+                    "type": "text",
+                    "text": "Briefly describe what you see in this video frame. Focus on: people present, their activities, emotions, setting, key details. Keep it to 1-2 sentences."
+                }
+            ],
+        )
+        
+        response = llm.invoke([message])
+        description = response.content if hasattr(response, 'content') else str(response)
+        
+        return description.strip()
+        
+    except Exception as e:
+        print(f"Error analyzing frame with GPT: {e}")
+        return "Scene content analysis unavailable"
+
+
+
 def create_scene_summary_for_llm(scene_transcripts):
     """
     Create a formatted summary of scenes with transcripts for LLM analysis.

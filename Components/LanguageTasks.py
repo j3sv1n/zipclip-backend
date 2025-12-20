@@ -409,12 +409,11 @@ Return a JSON object with the following structure:
 
 def GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120):
     """
-    Use LLM to select important scenes based on visual characteristics and distribution,
-    NOT based on audio transcription.
+    Use LLM to select important scenes based on visual analysis of what's in each scene.
     
     Args:
-        scene_segments: List of scene dicts from convert_scenes_to_segments with keys:
-                       'scene_start', 'scene_end', 'duration', 'visual_description'
+        scene_segments: List of scene dicts with keys:
+                       'scene_start', 'scene_end', 'duration', 'frame_description'
         target_duration: Target total duration in seconds (default 120 for 2-minute short)
     
     Returns:
@@ -422,8 +421,8 @@ def GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120):
     """
     from langchain_openai import ChatOpenAI
     
-    # Build scene summary focusing on visual characteristics
-    scene_summary = "DETECTED VISUAL SCENES (Frame-based analysis):\n"
+    # Build scene summary with visual analysis
+    scene_summary = "DETECTED SCENES WITH VISUAL ANALYSIS:\n"
     scene_summary += "=" * 80 + "\n\n"
     
     for i, scene in enumerate(scene_segments, 1):
@@ -431,23 +430,38 @@ def GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120):
             f"Scene {i}: {scene['scene_start']:.2f}s - {scene['scene_end']:.2f}s "
             f"(duration: {scene['duration']:.2f}s)\n"
         )
-        scene_summary += f"Visual characteristics: {scene['visual_description']}\n"
+        scene_summary += f"Visual content: {scene['frame_description']}\n"
         scene_summary += "-" * 80 + "\n\n"
     
+    min_duration = max(60, int(target_duration * 0.6))  # At least 60s or 60% of target
+    
     scene_system = f"""
-You are analyzing a video that has been split into visual scenes detected by analyzing frame-to-frame changes.
-Each scene represents a distinct visual change or event in the video, independent of audio.
-Your task is to select 3-5 important scenes that together form an engaging and cohesive short video.
+You are analyzing a video and selecting the most important and memorable scenes based on their visual content.
+Each scene has been analyzed to describe what's happening visually (people, activities, emotions, settings).
 
-Selection criteria (visual, NOT audio-based):
-- Vary the scene types (mix of short and medium scenes when available)
-- Distribute selections throughout the video (not all from beginning)
-- Include scenes at different time points to show video progression
-- Prefer scenes with medium duration (10-20s) when available
-- Create a balanced, diverse selection
+Your task is to select scenes that together create a compelling short video.
 
-Try to achieve a total duration of approximately {target_duration} seconds.
-Select whole scenes (don't split them) - use the exact start and end times provided.
+DURATION REQUIREMENTS:
+- MAXIMUM 10 seconds per segment (strict limit)
+- Exception: Only use up to 20s if the moment is EXTREMELY important (e.g., main subject/couple interaction)
+- MINIMUM total duration: {min_duration} seconds
+- TARGET total duration: {target_duration} seconds
+- You MUST select enough scenes to reach at least {min_duration}s
+
+Selection criteria (based on visual content):
+- Prioritize scenes with key people/moments (e.g., main subjects/couple, important interactions)
+- Include emotional or significant moments
+- Include celebratory or joyful moments
+- Select scenes that capture the essence/highlights of the event
+- Distribute selections throughout the video
+- Aim for 6-12+ scenes total (more shorter clips for better pacing)
+
+IMPORTANT: For each segment, select ONLY the duration you need from the scene:
+- If scene is 30s long but only the first 10s shows the important moment, use start to (start+10)
+- You can split a long scene into multiple clips if different parts are important
+- Default to 10s per clip unless it's essential to go longer
+
+Select segments using exact start and end times. You can break up long scenes into multiple clips.
 
 Return a JSON object with the following structure:
 {{{{
@@ -455,11 +469,11 @@ Return a JSON object with the following structure:
         {{{{
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
-            "content": "Why this scene is visually interesting/important"
+            "content": "Why this segment is important/memorable"
         }}}},
         ...
     ],
-    "total_duration": <sum of all scene durations in seconds (number)>
+    "total_duration": <sum of all segment durations in seconds (number)>
 }}}}
 
 ## Scene Information
@@ -477,13 +491,14 @@ Return a JSON object with the following structure:
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", scene_system),
-                ("user", "Please select the most visually important scenes for the short video based on visual characteristics and distribution, not audio.")
+                ("user", f"Create a {target_duration}s video (minimum {min_duration}s). Use 10s max per clip normally. Only go to 20s if absolutely critical. Select/split scenes as needed to meet duration while keeping clips short and punchy.")
             ]
         )
         chain = prompt | llm.with_structured_output(MultiSegmentResponse, method="function_calling")
         
-        print(f"Calling LLM for frame-based scene selection (target: {target_duration}s)...")
-        print(f"Selecting based on VISUAL characteristics, NOT audio transcription")
+        print(f"Calling LLM for scene selection based on visual content...")
+        print(f"Target: {target_duration}s, Minimum: {min_duration}s")
+        print(f"Max per segment: 10s (20s only for critical moments)")
         response = chain.invoke({})
         
         # Validate response
@@ -499,7 +514,7 @@ Return a JSON object with the following structure:
         total_duration = 0
         
         print(f"\n{'='*60}")
-        print(f"SELECTED {len(response.segments)} VISUAL SCENES:")
+        print(f"SELECTED {len(response.segments)} SEGMENTS:")
         print(f"{'='*60}")
         
         for i, segment in enumerate(response.segments, 1):
@@ -517,6 +532,16 @@ Return a JSON object with the following structure:
                     continue
                 
                 duration = end - start
+                
+                # Enforce max duration (10s normally, 20s for critical)
+                # Give LLM some flexibility but warn if exceeded
+                if duration > 20:
+                    print(f"  Warning: Segment {i} is {duration:.1f}s (exceeds 20s max) - truncating to 20s")
+                    end = start + 20
+                    duration = 20
+                elif duration > 10:
+                    print(f"  Note: Segment {i} is {duration:.1f}s (above 10s standard, but acceptable)")
+                
                 segments.append({
                     'start': start,
                     'end': end,
@@ -524,14 +549,20 @@ Return a JSON object with the following structure:
                 })
                 total_duration += duration
                 
-                print(f"  Scene {i}: {start:.2f}s - {end:.2f}s ({duration:.2f}s)")
+                print(f"  Segment {i}: {start:.2f}s - {end:.2f}s ({duration:.2f}s)")
                 print(f"    Reason: {segment.content}")
                 
             except (ValueError, TypeError) as e:
                 print(f"  Warning: Could not parse segment {i}: {e}")
                 continue
         
-        print(f"\nTotal duration: {total_duration:.2f}s")
+        print(f"\nTotal duration: {total_duration:.2f}s (target: {target_duration}s, minimum: {min_duration}s)")
+        
+        # If total duration is below minimum, warn user
+        if total_duration < min_duration:
+            print(f"⚠️  WARNING: Total duration {total_duration:.2f}s is below minimum {min_duration}s")
+            print(f"    Consider selecting more or longer scenes")
+        
         print(f"{'='*60}\n")
         
         if not segments:
