@@ -9,6 +9,7 @@
 *.mp4
 *.webm
 *.m4a
+*.mov
 
 # Virtual environment
 venv/
