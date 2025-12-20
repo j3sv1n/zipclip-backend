@@ -167,17 +167,17 @@ Try to achieve a total duration of approximately {target_duration} seconds acros
 Each segment should contain only complete sentences - do not cut sentences in the middle.
 
 Return a JSON object with the following structure:
-{{
+{{{{
     "segments": [
-        {{
+        {{{{
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
             "content": "Brief description of what makes this segment interesting"
-        }},
+        }}}},
         ...
     ],
     "total_duration": <sum of all segment durations in seconds (number)>
-}}
+}}}}
 
 ## Input
 {{Transcription}}
@@ -305,17 +305,17 @@ Try to achieve a total duration of approximately {target_duration} seconds.
 
 Analyze the scene boundaries and transcripts, then select whole scenes (don't split them).
 Return a JSON object with the following structure:
-{{
+{{{{
     "segments": [
-        {{
+        {{{{
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
             "content": "Why this scene is important"
-        }},
+        }}}},
         ...
     ],
     "total_duration": <sum of all scene durations in seconds (number)>
-}}
+}}}}
 
 ## Scene Information
 {scene_summary}
