@@ -2,7 +2,15 @@
 
 AI-powered tool to automatically generate engaging YouTube Shorts from long-form videos. Uses GPT-4o-mini and Whisper to extract highlights, add subtitles, and crop videos vertically for social media.
 
+### Youtube tutorial -> https://youtu.be/dKMueTMW1Nw
+
+### Medium tutorial -> https://medium.com/@anilmatcha/ai-youtube-shorts-generator-in-python-a-complete-tutorial-c3df6523b362
+
 ![longshorts](https://github.com/user-attachments/assets/3f5d1abf-bf3b-475f-8abf-5e253003453a)
+
+[Demo Input Video](https://github.com/SamurAIGPT/AI-Youtube-Shorts-Generator/blob/main/videos/Blinken%20Admires%20'Friend%20Jai'%20As%20Indian%20EAM%20Gets%20Savage%20In%20Munich%3B%20'I'm%20Smart%20Enough...'%20%7C%20Watch.mp4)
+
+[Demo Output Video](https://github.com/SamurAIGPT/AI-Youtube-Shorts-Generator/blob/main/Final.mp4)
 
 ## Features
 
@@ -59,12 +67,30 @@ AI-powered tool to automatically generate engaging YouTube Shorts from long-form
    pip install -r requirements.txt
    ```
 
+<<<<<<< HEAD
 6. **Set up environment variables:**
    
    Create a `.env` file in the project root:
    ```bash
    OPENAI_API=your_openai_api_key_here
    ```
+=======
+4. Install the python dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+1. Set up the environment variables.
+
+Create a `.env` file in the project root directory and add your OpenAI API key:
+
+```bash
+OPENAI_API=your_openai_api_key_here
+```
+>>>>>>> parent of cf785a1 (Merge branch 'main' of https://github.com/Mora140/AI-Youtube-Shorts-Generator)
 
 ## Usage
 

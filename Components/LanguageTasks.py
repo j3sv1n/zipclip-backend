@@ -32,11 +32,11 @@ Do not cut the sentences in the middle.
 The selected text should form a complete thought.
 Return a JSON object with the following structure:
 ## Output 
-[{{
+{{
     start: "Start time of the segment in seconds (number)",
     content: "The transcribed text from the selected segment (clean text only, NO timestamps)",
     end: "End time of the segment in seconds (number)"
-}}]
+}}
 
 ## Input
 {Transcription}
@@ -81,8 +81,8 @@ def GetHighlight(Transcription):
             return None, None
         
         try:
-            Start = int(response.start)
-            End = int(response.end)
+            Start = float(response.start)
+            End = float(response.end)
         except (ValueError, TypeError) as e:
             print(f"ERROR: Could not parse start/end times from response")
             print(f"  response.start: {response.start}")

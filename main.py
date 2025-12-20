@@ -42,6 +42,10 @@ else:
         # Extract title from downloaded file path
         video_title = os.path.splitext(os.path.basename(Vid))[0]
 
+# Ask user if they want subtitles
+subtitles_input = input("Do you want to add subtitles to the video? (y/n, default: y): ").strip().lower()
+add_subtitles = subtitles_input != 'n'  # Default to yes unless user explicitly says no
+
 # Clean and slugify title for filename
 def clean_filename(title):
     # Convert to lowercase
@@ -157,15 +161,19 @@ if Vid:
                 print("Step 2/4: Cropping to vertical format (9:16)...")
                 crop_to_vertical(temp_clip, temp_cropped)
                 
-                print("Step 3/4: Adding subtitles to video...")
-                add_subtitles_to_video(temp_cropped, temp_subtitled, transcriptions, video_start_time=start)
-                
                 # Generate final output filename with random identifier
                 clean_title = clean_filename(video_title) if video_title else "output"
                 final_output = f"{clean_title}_{session_id}_short.mp4"
                 
-                print("Step 4/4: Adding audio to final video...")
-                combine_videos(temp_clip, temp_subtitled, final_output)
+                if add_subtitles:
+                    print("Step 3/4: Adding subtitles to video...")
+                    add_subtitles_to_video(temp_cropped, temp_subtitled, transcriptions, video_start_time=start)
+                    
+                    print("Step 4/4: Adding audio to final video...")
+                    combine_videos(temp_clip, temp_subtitled, final_output)
+                else:
+                    print("Step 3/3: Adding audio to final video (subtitles skipped)...")
+                    combine_videos(temp_clip, temp_cropped, final_output)
                 print(f"\n{'='*60}")
                 print(f"✓ SUCCESS: {final_output} is ready!")
                 print(f"{'='*60}\n")

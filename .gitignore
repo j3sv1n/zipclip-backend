@@ -17,4 +17,8 @@ venv/
 # Environment variables
 .env
 
+# Directories
+videos/
+venv/
+
 *.log
