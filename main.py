@@ -1,8 +1,8 @@
 from Components.YoutubeDownloader import download_youtube_video
 from Components.Edit import extractAudio, crop_video, stitch_video_segments
 from Components.Transcription import transcribeAudio
-from Components.LanguageTasks import GetHighlight, GetHighlightMultiSegment, GetHighlightMultiSegmentFromScenes
-from Components.SceneDetection import detect_scenes, map_transcript_to_scenes
+from Components.LanguageTasks import GetHighlight, GetHighlightMultiSegment, GetHighlightMultiSegmentFromScenes, GetHighlightMultiSegmentFromFrames
+from Components.SceneDetection import detect_scenes, map_transcript_to_scenes, convert_scenes_to_segments
 from Components.FaceCrop import crop_to_vertical, combine_videos
 from Components.Subtitles import add_subtitles_to_video
 import sys
@@ -150,8 +150,8 @@ if Vid:
                     sys.exit(1)
             
             elif processing_mode == 'scene_based':
-                # Scene-based mode: detect scenes and select important ones
-                print("Detecting scenes in video...")
+                # Scene-based mode: detect scenes using frame analysis and select important ones
+                print("Detecting scenes in video using frame-based analysis...")
                 scenes = detect_scenes(Vid)
                 
                 if not scenes:
@@ -160,17 +160,17 @@ if Vid:
                     print(f"{'='*60}\n")
                     sys.exit(1)
                 
-                print("Mapping transcriptions to detected scenes...")
-                scene_transcripts = map_transcript_to_scenes(scenes, transcriptions)
+                print("Converting detected visual scenes to segment format...")
+                scene_segments = convert_scenes_to_segments(scenes)
                 
-                if not scene_transcripts:
+                if not scene_segments:
                     print(f"\n{'='*60}")
-                    print("ERROR: Failed to map transcriptions to scenes")
+                    print("ERROR: Failed to convert scenes to segment format")
                     print(f"{'='*60}\n")
                     sys.exit(1)
                 
-                print("Analyzing scenes to find important ones...")
-                segments = GetHighlightMultiSegmentFromScenes(scene_transcripts, target_duration=120)
+                print("Analyzing visual scenes to find important ones...")
+                segments = GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120)
                 
                 if segments is None:
                     print(f"\n{'='*60}")

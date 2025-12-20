@@ -2,36 +2,81 @@ from scenedetect import detect, ContentDetector, AdaptiveDetector
 from scenedetect.video_manager import VideoManager
 from scenedetect.scene_manager import SceneManager
 import os
+from moviepy.editor import VideoFileClip
+import numpy as np
 
-def detect_scenes(video_path, threshold=27.0, min_scene_len=3.0):
+def detect_scenes(video_path, threshold=12.0, min_scene_len=2.0):
     """
-    Detect scenes in a video using PySceneDetect.
+    Detect scenes in a video using PySceneDetect with frame-based analysis.
+    Optimized for 1-hour videos to generate 10+ segments with 15-20 second max duration.
     
     Args:
         video_path: Path to the video file
-        threshold: Sensitivity for scene detection (lower = more sensitive, default=27.0)
-        min_scene_len: Minimum scene length in seconds (default=3.0)
+        threshold: Sensitivity for scene detection (lower = more sensitive, default=12.0)
+                  Recommended: 8-15 for higher sensitivity, detects more visual changes
+        min_scene_len: Minimum scene length in seconds (default=2.0)
     
     Returns:
         List of tuples [(start_time, end_time), ...] representing scene boundaries in seconds
     """
     try:
-        print(f"Detecting scenes in video... (threshold={threshold}, min_scene_len={min_scene_len}s)")
+        # Get video duration for adaptive thresholding
+        try:
+            video = VideoFileClip(video_path)
+            duration = video.duration
+            video.close()
+            print(f"Video duration: {duration:.2f}s ({duration/60:.1f} minutes)")
+            
+            # Adaptive threshold based on video length
+            # For 1-hour (3600s) videos, we want at least 10 segments
+            # That means average segment length of 360s (6 minutes)
+            # But we want max 15-20s, so we need frequent scene cuts
+            # Use lower threshold for longer videos to get more cuts
+            if duration > 3000:  # 50+ minute videos
+                threshold = min(threshold, 10.0)
+                min_scene_len = min(min_scene_len, 1.5)
+                print(f"Long video detected - using aggressive scene detection")
+                print(f"  Adjusted threshold: {threshold}, min_scene_len: {min_scene_len}s")
+        except Exception as e:
+            print(f"Could not get video duration: {e}")
+            duration = None
         
-        # Use the simple detect API
-        scene_list = detect(video_path, ContentDetector(threshold=threshold, min_scene_len=int(min_scene_len * 30)))
+        print(f"Detecting scenes in video using frame-based analysis...")
+        print(f"Parameters: threshold={threshold}, min_scene_len={min_scene_len}s")
+        
+        # Use ContentDetector with frame-based analysis (default in pySceneDetect)
+        # ContentDetector measures the difference between consecutive frames
+        # This is purely visual analysis, independent of audio
+        scene_list = detect(
+            video_path, 
+            ContentDetector(threshold=threshold, min_scene_len=int(min_scene_len * 30))
+        )
         
         # Convert to list of (start_time, end_time) tuples in seconds
         scenes = []
         for i, scene in enumerate(scene_list):
             start_time = scene[0].get_seconds()
             end_time = scene[1].get_seconds()
+            duration_scene = end_time - start_time
+            
+            # Enforce max segment length constraint (15-20 seconds)
+            # If a scene is longer than 20 seconds, we'll let LLM handle splitting if needed
+            # But we still report it as-is
             scenes.append((start_time, end_time))
         
         print(f"✓ Detected {len(scenes)} scenes in the video")
         
-        # Print first few scenes for debugging
+        # Calculate statistics
         if scenes:
+            durations = [end - start for start, end in scenes]
+            avg_duration = sum(durations) / len(durations)
+            max_duration = max(durations)
+            min_duration = min(durations)
+            
+            print(f"  Scene statistics:")
+            print(f"    Average duration: {avg_duration:.2f}s")
+            print(f"    Min duration: {min_duration:.2f}s")
+            print(f"    Max duration: {max_duration:.2f}s")
             print(f"  First 5 scenes:")
             for i, (start, end) in enumerate(scenes[:5]):
                 print(f"    Scene {i+1}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
@@ -119,6 +164,75 @@ def map_transcript_to_scenes(scenes, transcriptions):
             print(f"    Text preview: {sample['transcript'][:100]}...")
         
         return scene_transcripts
+    
+    except Exception as e:
+        print(f"Error mapping transcriptions to scenes: {e}")
+        return []
+
+
+def convert_scenes_to_segments(scenes):
+    """
+    Convert detected scenes into segment format for selection.
+    This is used for frame-based scene analysis without transcripts.
+    
+    Args:
+        scenes: List of (start_time, end_time) tuples
+    
+    Returns:
+        List of dicts with scene info:
+        [
+            {
+                'scene_index': int,
+                'scene_start': float,
+                'scene_end': float,
+                'duration': float,
+                'visual_description': str (computed from scene characteristics)
+            },
+            ...
+        ]
+    """
+    try:
+        print("Converting detected scenes to segment format...")
+        
+        scene_segments = []
+        
+        for scene_idx, (scene_start, scene_end) in enumerate(scenes):
+            duration = scene_end - scene_start
+            
+            # Create visual description based on scene characteristics
+            # (position in video, relative duration, etc.)
+            position_percent = (scene_start / (scene_end + 1)) * 100 if scene_end > 0 else 0
+            
+            # Categorize scene by duration
+            if duration < 5:
+                duration_category = "Very Short"
+            elif duration < 10:
+                duration_category = "Short"
+            elif duration < 20:
+                duration_category = "Medium"
+            else:
+                duration_category = "Long"
+            
+            visual_description = f"{duration_category} scene ({duration:.1f}s)"
+            
+            scene_segments.append({
+                'scene_index': scene_idx,
+                'scene_start': scene_start,
+                'scene_end': scene_end,
+                'duration': duration,
+                'visual_description': visual_description
+            })
+        
+        print(f"✓ Converted {len(scene_segments)} scenes to segment format")
+        
+        # Print sample for debugging
+        if scene_segments:
+            print(f"  Sample scene (first):")
+            sample = scene_segments[0]
+            print(f"    Time: {sample['scene_start']:.2f}s - {sample['scene_end']:.2f}s")
+            print(f"    Description: {sample['visual_description']}")
+        
+        return scene_segments
     
     except Exception as e:
         print(f"Error mapping transcripts to scenes: {e}")

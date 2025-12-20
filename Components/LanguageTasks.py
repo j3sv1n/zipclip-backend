@@ -407,5 +407,151 @@ Return a JSON object with the following structure:
         return None
 
 
+def GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120):
+    """
+    Use LLM to select important scenes based on visual characteristics and distribution,
+    NOT based on audio transcription.
+    
+    Args:
+        scene_segments: List of scene dicts from convert_scenes_to_segments with keys:
+                       'scene_start', 'scene_end', 'duration', 'visual_description'
+        target_duration: Target total duration in seconds (default 120 for 2-minute short)
+    
+    Returns:
+        List of segment dicts with 'start' and 'end' keys, or None if error
+    """
+    from langchain_openai import ChatOpenAI
+    
+    # Build scene summary focusing on visual characteristics
+    scene_summary = "DETECTED VISUAL SCENES (Frame-based analysis):\n"
+    scene_summary += "=" * 80 + "\n\n"
+    
+    for i, scene in enumerate(scene_segments, 1):
+        scene_summary += (
+            f"Scene {i}: {scene['scene_start']:.2f}s - {scene['scene_end']:.2f}s "
+            f"(duration: {scene['duration']:.2f}s)\n"
+        )
+        scene_summary += f"Visual characteristics: {scene['visual_description']}\n"
+        scene_summary += "-" * 80 + "\n\n"
+    
+    scene_system = f"""
+You are analyzing a video that has been split into visual scenes detected by analyzing frame-to-frame changes.
+Each scene represents a distinct visual change or event in the video, independent of audio.
+Your task is to select 3-5 important scenes that together form an engaging and cohesive short video.
+
+Selection criteria (visual, NOT audio-based):
+- Vary the scene types (mix of short and medium scenes when available)
+- Distribute selections throughout the video (not all from beginning)
+- Include scenes at different time points to show video progression
+- Prefer scenes with medium duration (10-20s) when available
+- Create a balanced, diverse selection
+
+Try to achieve a total duration of approximately {target_duration} seconds.
+Select whole scenes (don't split them) - use the exact start and end times provided.
+
+Return a JSON object with the following structure:
+{{{{
+    "segments": [
+        {{{{
+            "start": <start time in seconds (number)>,
+            "end": <end time in seconds (number)>,
+            "content": "Why this scene is visually interesting/important"
+        }}}},
+        ...
+    ],
+    "total_duration": <sum of all scene durations in seconds (number)>
+}}}}
+
+## Scene Information
+{scene_summary}
+"""
+    
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=1.0,
+            api_key=api_key
+        )
+
+        from langchain.prompts import ChatPromptTemplate
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", scene_system),
+                ("user", "Please select the most visually important scenes for the short video based on visual characteristics and distribution, not audio.")
+            ]
+        )
+        chain = prompt | llm.with_structured_output(MultiSegmentResponse, method="function_calling")
+        
+        print(f"Calling LLM for frame-based scene selection (target: {target_duration}s)...")
+        print(f"Selecting based on VISUAL characteristics, NOT audio transcription")
+        response = chain.invoke({})
+        
+        # Validate response
+        if not response:
+            print("ERROR: LLM returned empty response")
+            return None
+        
+        if not hasattr(response, 'segments') or not response.segments:
+            print(f"ERROR: Invalid response structure or no segments returned")
+            return None
+        
+        segments = []
+        total_duration = 0
+        
+        print(f"\n{'='*60}")
+        print(f"SELECTED {len(response.segments)} VISUAL SCENES:")
+        print(f"{'='*60}")
+        
+        for i, segment in enumerate(response.segments, 1):
+            try:
+                start = float(segment.start)
+                end = float(segment.end)
+                
+                # Validate times
+                if start < 0 or end < 0:
+                    print(f"  Warning: Segment {i} has negative time - skipping")
+                    continue
+                
+                if end <= start:
+                    print(f"  Warning: Segment {i} has invalid time range (start >= end) - skipping")
+                    continue
+                
+                duration = end - start
+                segments.append({
+                    'start': start,
+                    'end': end,
+                    'content': segment.content
+                })
+                total_duration += duration
+                
+                print(f"  Scene {i}: {start:.2f}s - {end:.2f}s ({duration:.2f}s)")
+                print(f"    Reason: {segment.content}")
+                
+            except (ValueError, TypeError) as e:
+                print(f"  Warning: Could not parse segment {i}: {e}")
+                continue
+        
+        print(f"\nTotal duration: {total_duration:.2f}s")
+        print(f"{'='*60}\n")
+        
+        if not segments:
+            print("ERROR: No valid segments extracted from LLM response")
+            return None
+        
+        return segments
+        
+    except Exception as e:
+        print(f"\n{'='*60}")
+        print(f"ERROR IN GetHighlightMultiSegmentFromFrames FUNCTION:")
+        print(f"{'='*60}")
+        print(f"Exception type: {type(e).__name__}")
+        print(f"Exception message: {str(e)}")
+        print(f"Number of scenes: {len(scene_segments)}")
+        print(f"{'='*60}\n")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 if __name__ == "__main__":
     print(GetHighlight(User))
