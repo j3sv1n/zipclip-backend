@@ -2,6 +2,8 @@
 
 AI-powered tool to automatically generate engaging YouTube Shorts from long-form videos. Uses GPT-4o-mini and Whisper to extract highlights, add subtitles, and crop videos vertically for social media.
 
+**Now with Advanced Scene Detection & Multi-Segment Support!** 🎬✨
+
 ### Youtube tutorial -> https://youtu.be/dKMueTMW1Nw
 
 ### Medium tutorial -> https://medium.com/@anilmatcha/ai-youtube-shorts-generator-in-python-a-complete-tutorial-c3df6523b362
@@ -14,9 +16,10 @@ AI-powered tool to automatically generate engaging YouTube Shorts from long-form
 
 ## Features
 
+### Core Features
 - **🎬 Flexible Input**: Supports both YouTube URLs and local video files
 - **🎤 GPU-Accelerated Transcription**: CUDA-enabled Whisper for fast speech-to-text
-- **🤖 AI Highlight Selection**: GPT-5-nano automatically finds the most engaging 2-minute segments
+- **🤖 AI Highlight Selection**: GPT-4o-mini automatically finds engaging segments
 - **✅ Interactive Approval**: Review and approve/regenerate selections with 15-second auto-approve timeout
 - **📝 Auto Subtitles**: Stylized captions with Franklin Gothic font burned into video
 - **🎯 Smart Cropping**: 
@@ -26,6 +29,27 @@ AI-powered tool to automatically generate engaging YouTube Shorts from long-form
 - **⚙️ Automation Ready**: CLI arguments, auto-quality selection, timeout-based approvals
 - **🔄 Concurrent Execution**: Unique session IDs allow multiple instances to run simultaneously
 - **📦 Clean Output**: Slugified filenames (e.g., `my-video-title_short.mp4`) and automatic temp file cleanup
+
+### NEW: Scene Detection & Multi-Segment Features 🆕
+- **🎨 Scene Detection**: Automatically detects visual scene boundaries in videos
+- **📍 Multi-Segment Selection**: Intelligently extracts and stitches together 3-5 important segments from throughout the video
+- **🔍 Three Processing Modes**:
+  1. **Continuous** (Original): Single 120-second segment
+  2. **Multi-Segment (Transcript)**: Select important moments from entire transcription
+  3. **Multi-Segment (Scene-Based)**: Detect scenes and select visually important ones
+- **✂️ Seamless Stitching**: Combines multiple video segments with smooth transitions
+- **🎯 Content Coverage**: No important moments missed by limiting to a single time window
+- **📊 Smart Analysis**: LLM analyzes entire video to find coherent, engaging segment combinations
+
+## Processing Modes Comparison
+
+| Feature | Mode 1: Continuous | Mode 2: Transcript | Mode 3: Scene-Based |
+|---------|---|---|---|
+| **Speed** | ⚡⚡⚡ Fast | ⚡ Slower | ⚡⚡ Medium |
+| **Segments** | 1 | 3-5 | 3-5 |
+| **Content Coverage** | Limited (120s window) | Full video | Full video |
+| **Best For** | Quick clips | Educational | Presentations |
+| **Complexity** | Simple | Medium | Advanced |
 
 ## Installation
 
