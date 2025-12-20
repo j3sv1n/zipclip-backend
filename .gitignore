@@ -11,6 +11,10 @@
 *.m4a
 *.mov
 
+# Output and audio directories
+output_videos/
+audio/
+
 # Virtual environment
 venv/
 .venv/

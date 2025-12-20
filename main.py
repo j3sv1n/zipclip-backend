@@ -14,6 +14,17 @@ import re
 session_id = str(uuid.uuid4())[:8]
 print(f"Session ID: {session_id}")
 
+# Create output directories if they don't exist
+output_dir = "output_videos"
+if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+    print(f"Created output directory: {output_dir}")
+
+audio_dir = "audio"
+if not os.path.exists(audio_dir):
+    os.makedirs(audio_dir)
+    print(f"Created audio directory: {audio_dir}")
+
 # Check for auto-approve flag (for batch processing)
 auto_approve = "--auto-approve" in sys.argv
 if auto_approve:
@@ -83,7 +94,7 @@ def clean_filename(title):
 # Process video (works for both local files and downloaded videos)
 if Vid:
     # Create unique temporary filenames
-    audio_file = f"audio_{session_id}.wav"
+    audio_file = os.path.join(audio_dir, f"audio_{session_id}.wav")
     temp_clip = f"temp_clip_{session_id}.mp4"
     temp_cropped = f"temp_cropped_{session_id}.mp4"
     temp_subtitled = f"temp_subtitled_{session_id}.mp4"
@@ -233,7 +244,7 @@ if Vid:
                 
                 # Generate final output filename with random identifier
                 clean_title = clean_filename(video_title) if video_title else "output"
-                final_output = f"{clean_title}_{session_id}_short.mp4"
+                final_output = os.path.join(output_dir, f"{clean_title}_{session_id}_short.mp4")
                 temp_stitched = f"temp_stitched_{session_id}.mp4"
                 
                 if len(segments) == 1:
