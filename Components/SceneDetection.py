@@ -5,7 +5,7 @@ import os
 from moviepy.editor import VideoFileClip
 import numpy as np
 
-def detect_scenes(video_path, threshold=12.0, min_scene_len=2.0):
+def detect_scenes(video_path, threshold=12.0, min_scene_len=20.0):
     """
     Detect scenes in a video using PySceneDetect with frame-based analysis.
     Optimized for 1-hour videos to generate 10+ segments with 15-20 second max duration.
@@ -14,7 +14,7 @@ def detect_scenes(video_path, threshold=12.0, min_scene_len=2.0):
         video_path: Path to the video file
         threshold: Sensitivity for scene detection (lower = more sensitive, default=12.0)
                   Recommended: 8-15 for higher sensitivity, detects more visual changes
-        min_scene_len: Minimum scene length in seconds (default=2.0)
+        min_scene_len: Minimum scene length in seconds (default=20.0)
     
     Returns:
         List of tuples [(start_time, end_time), ...] representing scene boundaries in seconds
