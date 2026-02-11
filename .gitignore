@@ -27,3 +27,6 @@ videos/
 venv/
 
 *.log
+# API uploads and temporary files
+uploads/
+temp_*/

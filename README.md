@@ -29,6 +29,7 @@ AI-powered tool to automatically generate engaging YouTube Shorts from long-form
 - **⚙️ Automation Ready**: CLI arguments, auto-quality selection, timeout-based approvals
 - **🔄 Concurrent Execution**: Unique session IDs allow multiple instances to run simultaneously
 - **📦 Clean Output**: Slugified filenames (e.g., `my-video-title_short.mp4`) and automatic temp file cleanup
+- **🌐 API Mode**: Run as a REST API server for frontend integration (NEW!)
 
 ### NEW: Scene Detection & Multi-Segment Features 🆕
 - **🎨 Scene Detection**: Automatically detects visual scene boundaries in videos
@@ -91,51 +92,36 @@ AI-powered tool to automatically generate engaging YouTube Shorts from long-form
    pip install -r requirements.txt
    ```
 
-<<<<<<< HEAD
 6. **Set up environment variables:**
    
-   Create a `.env` file in the project root:
+   Copy the example file and add your OpenAI API key:
    ```bash
-   OPENAI_API=your_openai_api_key_here
+   cp .env.example .env
+   # Edit .env and add your API key
    ```
-=======
-4. Install the python dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-1. Set up the environment variables.
-
-Create a `.env` file in the project root directory and add your OpenAI API key:
-
-```bash
-OPENAI_API=your_openai_api_key_here
-```
->>>>>>> parent of cf785a1 (Merge branch 'main' of https://github.com/Mora140/AI-Youtube-Shorts-Generator)
 
 ## Usage
 
-### With YouTube URL (Interactive)
+### CLI Mode (Command Line)
+
+#### With YouTube URL (Interactive)
 ```bash
 ./run.sh
 # Then enter YouTube URL when prompted
 # You'll be able to select video resolution (5s timeout, auto-selects highest)
 ```
 
-### With YouTube URL (Command-Line)
+#### With YouTube URL (Command-Line)
 ```bash
 ./run.sh "https://youtu.be/VIDEO_ID"
 ```
 
-### With Local Video File
+#### With Local Video File
 ```bash
 ./run.sh "/path/to/your/video.mp4"
 ```
 
-### Batch Processing Multiple URLs
+#### Batch Processing Multiple URLs
 Create a `urls.txt` file with one URL per line, then:
 
 ```bash
@@ -147,6 +133,95 @@ Or without auto-approve (will prompt for each):
 ```bash
 xargs -a urls.txt -I{} ./run.sh {}
 ```
+
+---
+
+### API Mode (REST API Server)
+
+Run the backend as a REST API server for integration with frontend applications.
+
+#### Start the API Server
+
+```bash
+./run_api.sh
+```
+
+The API will be available at:
+- **Base URL**: `http://localhost:8000`
+- **API Documentation**: `http://localhost:8000/docs` (Swagger UI)
+- **Health Check**: `http://localhost:8000/health`
+
+#### Configuration
+
+Edit `.env` to configure the API server:
+
+```env
+API_HOST=0.0.0.0          # Server host
+API_PORT=8000              # Server port
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173  # Allowed origins
+MAX_CONCURRENT_JOBS=3      # Maximum concurrent processing jobs
+UPLOAD_MAX_SIZE=500000000  # Maximum upload size (500MB)
+```
+
+#### Example API Usage
+
+**Submit a video for processing:**
+```bash
+curl -X POST http://localhost:8000/api/process \
+  -H "Content-Type: application/json" \
+  -d '{
+    "video_url": "https://youtu.be/dKMueTMW1Nw",
+    "mode": "continuous",
+    "add_subtitles": true
+  }'
+```
+
+**Check job status:**
+```bash
+curl http://localhost:8000/api/status/{job_id}
+```
+
+**Download processed video:**
+```bash
+curl http://localhost:8000/api/download/{job_id} -o output.mp4
+```
+
+#### Frontend Integration
+
+See [API.md](API.md) for complete API documentation including:
+- Full endpoint specifications
+- Request/response examples
+- Frontend integration code (React, JavaScript)
+- Error handling
+- Processing modes
+
+**Quick Example** (JavaScript/React):
+```javascript
+// Submit video
+const response = await fetch('http://localhost:8000/api/process', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    video_url: 'https://youtu.be/dKMueTMW1Nw',
+    mode: 'multi_segment'
+  })
+});
+
+const { job_id } = await response.json();
+
+// Poll for status
+const checkStatus = async () => {
+  const res = await fetch(`http://localhost:8000/api/status/${job_id}`);
+  const data = await res.json();
+  
+  if (data.status === 'completed') {
+    // Download video
+    window.location.href = `http://localhost:8000/api/download/${job_id}`;
+  }
+};
+```
+
+---
 
 ## Resolution Selection
 
