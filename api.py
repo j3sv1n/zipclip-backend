@@ -48,11 +48,40 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 # Pydantic Models
+class SubtitleConfig(BaseModel):
+    """Subtitle styling options (matching Subtitles.py defaults)"""
+    font: str = Field("Franklin-Gothic", description="Font name")
+    fontsize: int = Field(80, description="Font size in pixels", ge=20, le=200)
+    color: str = Field("#2699ff", description="Text color (hex code)")
+    stroke_color: str = Field("black", description="Outline color (hex code)")
+    stroke_width: int = Field(2, description="Outline width in pixels", ge=0, le=10)
+
+
+class LLMConfig(BaseModel):
+    """LLM configuration options for highlight selection"""
+    model: str = Field("gpt-4o-mini", description="OpenAI model to use")
+    temperature: float = Field(1.0, description="Sampling temperature", ge=0.0, le=2.0)
+
+
 class ProcessRequest(BaseModel):
+    # Input
     video_url: Optional[str] = Field(None, description="YouTube URL or video URL")
+    
+    # Processing options
     mode: str = Field("continuous", description="Processing mode: continuous, multi_segment, scene_based")
-    add_subtitles: bool = Field(True, description="Whether to add subtitles")
-    target_duration: int = Field(120, description="Target duration in seconds", ge=30, le=300)
+    add_subtitles: bool = Field(True, description="Whether to add subtitles to the video")
+    target_duration: int = Field(120, description="Target duration in seconds for multi-segment modes", ge=30, le=300)
+    
+    # Batch processing
+    auto_approve: bool = Field(True, description="Automatically approve segments without review (batch mode)")
+    
+    # Advanced configuration
+    subtitle_config: Optional[SubtitleConfig] = Field(None, description="Custom subtitle styling")
+    llm_config: Optional[LLMConfig] = Field(None, description="LLM model and parameters for highlight selection")
+    
+    # Return options for frontend review
+    return_transcript: bool = Field(False, description="Return transcription with results")
+    return_segments_preview: bool = Field(False, description="Return segment preview before final processing (experimental)")
 
 
 class JobStatus(BaseModel):
@@ -66,6 +95,9 @@ class JobStatus(BaseModel):
     error: Optional[str] = None
     video_title: Optional[str] = None
     segments: Optional[List[Dict]] = None
+    transcript: Optional[List[Dict]] = None  # Full transcript with timestamps
+    processing_mode: Optional[str] = None  # The mode used for processing
+    target_duration_used: Optional[int] = None  # Target duration that was used
 
 
 class JobListItem(BaseModel):
@@ -158,11 +190,30 @@ async def health_check():
 async def create_processing_job(
     background_tasks: BackgroundTasks,
     request: Optional[ProcessRequest] = None,
-    file: Optional[UploadFile] = File(None)
+    file: Optional[UploadFile] = File(None),
+    mode: str = "continuous",
+    add_subtitles: bool = True,
+    target_duration: int = 120,
+    auto_approve: bool = True
 ):
     """
     Submit a video processing job.
+    
     Accepts either a JSON body with video_url or a file upload.
+    
+    **Request Body (JSON):**
+    - video_url: YouTube URL or video URL
+    - mode: 'continuous', 'multi_segment', or 'scene_based'
+    - add_subtitles: Whether to add subtitles (default: true)
+    - target_duration: Target duration in seconds (30-300, default: 120)
+    - auto_approve: Auto-approve segments for batch processing (default: true)
+    - subtitle_config: Custom subtitle styling options
+    - llm_config: Custom LLM model and parameters
+    - return_transcript: Return full transcript in response (default: false)
+    - return_segments_preview: Return segment preview (default: false)
+    
+    **Query Parameters (for file upload):**
+    - mode, add_subtitles, target_duration, auto_approve
     """
     
     # Check concurrent job limit
@@ -170,8 +221,11 @@ async def create_processing_job(
     if active_jobs >= MAX_CONCURRENT_JOBS:
         raise HTTPException(status_code=429, detail="Maximum concurrent jobs reached. Please try again later.")
     
-    # Determine input source
+    # Determine input source and extract options
     video_path = None
+    processing_mode = mode
+    process_subtitles = add_subtitles
+    process_duration = target_duration
     
     if file:
         # Handle file upload
@@ -186,23 +240,19 @@ async def create_processing_job(
         with open(video_path, "wb") as f:
             content = await file.read()
             f.write(content)
-        
-        mode = "continuous"
-        add_subtitles = True
-        target_duration = 120
     
     elif request and request.video_url:
         # Handle URL
         job_id = str(uuid.uuid4())[:8]
         video_path = request.video_url
-        mode = request.mode
-        add_subtitles = request.add_subtitles
-        target_duration = request.target_duration
+        processing_mode = request.mode
+        process_subtitles = request.add_subtitles
+        process_duration = request.target_duration
     
     else:
         raise HTTPException(status_code=400, detail="Either video_url or file must be provided")
     
-    # Create job entry
+    # Create job entry with additional info
     with jobs_lock:
         jobs[job_id] = {
             "job_id": job_id,
@@ -214,7 +264,10 @@ async def create_processing_job(
             "output_file": None,
             "error": None,
             "video_title": None,
-            "segments": None
+            "segments": None,
+            "transcript": None,
+            "processing_mode": processing_mode,
+            "target_duration_used": process_duration
         }
     
     # Start background processing
@@ -222,9 +275,9 @@ async def create_processing_job(
         process_job,
         job_id=job_id,
         video_path=video_path,
-        mode=mode,
-        add_subtitles=add_subtitles,
-        target_duration=target_duration
+        mode=processing_mode,
+        add_subtitles=process_subtitles,
+        target_duration=process_duration
     )
     
     return JobStatus(**jobs[job_id])
