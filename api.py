@@ -3,11 +3,12 @@ ZipClip Backend API Server
 FastAPI server for video processing with frontend integration support.
 """
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict
+import json
 import os
 import uuid
 import threading
@@ -189,13 +190,24 @@ async def health_check():
 @app.post("/api/process", response_model=JobStatus)
 async def create_processing_job(
     background_tasks: BackgroundTasks,
-    request: Optional[ProcessRequest] = None,
+    request: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     mode: str = "continuous",
     add_subtitles: bool = True,
     target_duration: int = 120,
     auto_approve: bool = True
 ):
+    # Parse the JSON string form field into a ProcessRequest model.
+    # If the value is not valid JSON (e.g. Swagger's "string" placeholder),
+    # silently ignore it and fall back to query parameters.
+    parsed_request: Optional[ProcessRequest] = None
+    if request:
+        try:
+            data = json.loads(request)
+            if isinstance(data, dict):
+                parsed_request = ProcessRequest(**data)
+        except (json.JSONDecodeError, ValueError):
+            pass  # Not valid JSON — fall back to query params
     """
     Submit a video processing job.
     
@@ -241,13 +253,13 @@ async def create_processing_job(
             content = await file.read()
             f.write(content)
     
-    elif request and request.video_url:
+    elif parsed_request and parsed_request.video_url:
         # Handle URL
         job_id = str(uuid.uuid4())[:8]
-        video_path = request.video_url
-        processing_mode = request.mode
-        process_subtitles = request.add_subtitles
-        process_duration = request.target_duration
+        video_path = parsed_request.video_url
+        processing_mode = parsed_request.mode
+        process_subtitles = parsed_request.add_subtitles
+        process_duration = parsed_request.target_duration
     
     else:
         raise HTTPException(status_code=400, detail="Either video_url or file must be provided")
