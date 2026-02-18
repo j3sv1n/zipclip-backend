@@ -151,7 +151,7 @@ def process_video(
         
         # Generate final output filename
         clean_title = clean_filename(video_title) if video_title else "output"
-        final_output = os.path.join(output_dir, f"{clean_title}_{session_id}_short.mp4")
+        final_output = os.path.join(output_dir, f"{clean_title}_{session_id}_zipped.mp4")
         
         if len(segments) == 1:
             update_progress("Extracting single segment...", 75)
