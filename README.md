@@ -47,8 +47,8 @@ An AI-powered tool for generating engaging YouTube Shorts from longer videos. Ut
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/SamurAIGPT/AI-Youtube-Shorts-Generator.git
-   cd AI-Youtube-Shorts-Generator
+   git clone https://github.com/j3sv1n/zipclip-backend.git
+   cd zipclip-backend
    ```
 
 2. Install system packages:
