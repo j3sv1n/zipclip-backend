@@ -1,372 +1,256 @@
-# AI YouTube Shorts Generator
+# ZipClip Backend
 
-AI-powered tool to automatically generate engaging YouTube Shorts from long-form videos. Uses GPT-4o-mini and Whisper to extract highlights, add subtitles, and crop videos vertically for social media.
+An AI-powered tool for generating engaging YouTube Shorts from longer videos. Utilizes GPT-4o-mini and Whisper to identify highlights, generate subtitles, and format videos for vertical social media platforms.
 
-**Now with Advanced Scene Detection & Multi-Segment Support!** 🎬✨
+## Key Features
 
-### Youtube tutorial -> https://youtu.be/dKMueTMW1Nw
+- Supports YouTube URLs and local video files
+- Fast transcription with CUDA-enabled Whisper
+- Automatic highlight selection using AI
+- Review and approve segments with auto-approve option
+- Automatic subtitle generation with custom styling
+- Intelligent cropping for faces or screen recordings
+- Vertical 9:16 format for Shorts/Reels
+- Command-line interface with automation options
+- Concurrent processing with unique session IDs
+- Clean output with slugified filenames
+- REST API mode for integrations
 
-### Medium tutorial -> https://medium.com/@anilmatcha/ai-youtube-shorts-generator-in-python-a-complete-tutorial-c3df6523b362
+### Advanced Features
+- Scene detection for visual boundaries
+- Multi-segment extraction and stitching
+- Three processing modes: Continuous, Transcript-based, Scene-based
+- Seamless transitions between segments
+- Full video content analysis
 
-![longshorts](https://github.com/user-attachments/assets/3f5d1abf-bf3b-475f-8abf-5e253003453a)
+## Processing Modes
 
-[Demo Input Video](https://github.com/SamurAIGPT/AI-Youtube-Shorts-Generator/blob/main/videos/Blinken%20Admires%20'Friend%20Jai'%20As%20Indian%20EAM%20Gets%20Savage%20In%20Munich%3B%20'I'm%20Smart%20Enough...'%20%7C%20Watch.mp4)
-
-[Demo Output Video](https://github.com/SamurAIGPT/AI-Youtube-Shorts-Generator/blob/main/Final.mp4)
-
-## Features
-
-### Core Features
-- **🎬 Flexible Input**: Supports both YouTube URLs and local video files
-- **🎤 GPU-Accelerated Transcription**: CUDA-enabled Whisper for fast speech-to-text
-- **🤖 AI Highlight Selection**: GPT-4o-mini automatically finds engaging segments
-- **✅ Interactive Approval**: Review and approve/regenerate selections with 15-second auto-approve timeout
-- **📝 Auto Subtitles**: Stylized captions with Franklin Gothic font burned into video
-- **🎯 Smart Cropping**: 
-  - **Face videos**: Static face-centered crop (no jerky movement)
-  - **Screen recordings**: Half-width display with smooth motion tracking (1 shift/second max)
-- **📱 Vertical Format**: Perfect 9:16 aspect ratio for TikTok/YouTube Shorts/Instagram Reels
-- **⚙️ Automation Ready**: CLI arguments, auto-quality selection, timeout-based approvals
-- **🔄 Concurrent Execution**: Unique session IDs allow multiple instances to run simultaneously
-- **📦 Clean Output**: Slugified filenames (e.g., `my-video-title_short.mp4`) and automatic temp file cleanup
-- **🌐 API Mode**: Run as a REST API server for frontend integration (NEW!)
-
-### NEW: Scene Detection & Multi-Segment Features 🆕
-- **🎨 Scene Detection**: Automatically detects visual scene boundaries in videos
-- **📍 Multi-Segment Selection**: Intelligently extracts and stitches together 3-5 important segments from throughout the video
-- **🔍 Three Processing Modes**:
-  1. **Continuous** (Original): Single 120-second segment
-  2. **Multi-Segment (Transcript)**: Select important moments from entire transcription
-  3. **Multi-Segment (Scene-Based)**: Detect scenes and select visually important ones
-- **✂️ Seamless Stitching**: Combines multiple video segments with smooth transitions
-- **🎯 Content Coverage**: No important moments missed by limiting to a single time window
-- **📊 Smart Analysis**: LLM analyzes entire video to find coherent, engaging segment combinations
-
-## Processing Modes Comparison
-
-| Feature | Mode 1: Continuous | Mode 2: Transcript | Mode 3: Scene-Based |
-|---------|---|---|---|
-| **Speed** | ⚡⚡⚡ Fast | ⚡ Slower | ⚡⚡ Medium |
-| **Segments** | 1 | 3-5 | 3-5 |
-| **Content Coverage** | Limited (120s window) | Full video | Full video |
-| **Best For** | Quick clips | Educational | Presentations |
-| **Complexity** | Simple | Medium | Advanced |
+| Aspect | Continuous | Transcript Multi | Scene Multi |
+|--------|------------|------------------|-------------|
+| Speed | Fast | Slower | Medium |
+| Segments | 1 | 3-5 | 3-5 |
+| Coverage | 120s window | Full video | Full video |
+| Use Case | Quick clips | Educational | Presentations |
+| Complexity | Simple | Medium | Advanced |
 
 ## Installation
 
-### Prerequisites
+### Requirements
 
-- Python 3.10+
-- FFmpeg with development headers
-- NVIDIA GPU with CUDA support (optional, but recommended for faster transcription)
-- ImageMagick (for subtitle rendering)
+- Python 3.10 or higher
+- FFmpeg with development libraries
+- NVIDIA GPU with CUDA (recommended for speed)
+- ImageMagick for subtitle rendering
 - OpenAI API key
 
-### Steps
+### Setup Steps
 
-1. **Clone the repository:**
+1. Clone the repository:
    ```bash
    git clone https://github.com/SamurAIGPT/AI-Youtube-Shorts-Generator.git
    cd AI-Youtube-Shorts-Generator
    ```
 
-2. **Install system dependencies:**
+2. Install system packages:
    ```bash
    sudo apt install -y ffmpeg libavdevice-dev libavfilter-dev libopus-dev \
      libvpx-dev pkg-config libsrtp2-dev imagemagick
    ```
 
-3. **Fix ImageMagick security policy** (required for subtitles):
+3. Update ImageMagick policy for subtitles:
    ```bash
    sudo sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml
    ```
 
-4. **Create and activate virtual environment:**
+4. Set up Python environment:
    ```bash
    python3.10 -m venv venv
    source venv/bin/activate
    ```
 
-5. **Install Python dependencies:**
+5. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
 
-6. **Set up environment variables:**
-   
-   Copy the example file and add your OpenAI API key:
+6. Configure environment:
+   Copy the example and set your OpenAI key:
    ```bash
    cp .env.example .env
-   # Edit .env and add your API key
+   # Add your API key to .env
    ```
 
 ## Usage
 
-### CLI Mode (Command Line)
+### Command Line Interface
 
-#### With YouTube URL (Interactive)
+#### Interactive with YouTube URL
 ```bash
 ./run.sh
-# Then enter YouTube URL when prompted
-# You'll be able to select video resolution (5s timeout, auto-selects highest)
+# Enter URL when prompted
+# Select resolution (auto-selects highest after 5s)
 ```
 
-#### With YouTube URL (Command-Line)
+#### Direct YouTube URL
 ```bash
 ./run.sh "https://youtu.be/VIDEO_ID"
 ```
 
-#### With Local Video File
+#### Local Video File
 ```bash
-./run.sh "/path/to/your/video.mp4"
+./run.sh "/path/to/video.mp4"
 ```
 
-#### Batch Processing Multiple URLs
-Create a `urls.txt` file with one URL per line, then:
-
+#### Batch Processing
+Create `urls.txt` with URLs, one per line:
 ```bash
-# Process all URLs sequentially with auto-approve
+# Auto-approve all
 xargs -a urls.txt -I{} ./run.sh --auto-approve {}
 ```
 
-Or without auto-approve (will prompt for each):
-```bash
-xargs -a urls.txt -I{} ./run.sh {}
-```
+### API Server Mode
 
----
+Run as a REST API for frontend integration.
 
-### API Mode (REST API Server)
-
-Run the backend as a REST API server for integration with frontend applications.
-
-#### Start the API Server
-
+#### Start Server
 ```bash
 ./run_api.sh
 ```
 
-The API will be available at:
-- **Base URL**: `http://localhost:8000`
-- **API Documentation**: `http://localhost:8000/docs` (Swagger UI)
-- **Health Check**: `http://localhost:8000/health`
+Server endpoints:
+- Base: http://localhost:8000
+- Docs: http://localhost:8000/docs
+- Health: http://localhost:8000/health
 
-#### Configuration
-
-Edit `.env` to configure the API server:
-
+#### API Configuration
+In `.env`:
 ```env
-API_HOST=0.0.0.0          # Server host
-API_PORT=8000              # Server port
-CORS_ORIGINS=http://localhost:3000,http://localhost:5173  # Allowed origins
-MAX_CONCURRENT_JOBS=3      # Maximum concurrent processing jobs
-UPLOAD_MAX_SIZE=500000000  # Maximum upload size (500MB)
+API_HOST=0.0.0.0
+API_PORT=8000
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+MAX_CONCURRENT_JOBS=3
+UPLOAD_MAX_SIZE=500000000
 ```
 
-#### Example API Usage
+#### API Examples
 
-**Submit a video for processing:**
+Submit job:
 ```bash
 curl -X POST http://localhost:8000/api/process \
   -H "Content-Type: application/json" \
-  -d '{
-    "video_url": "https://youtu.be/dKMueTMW1Nw",
-    "mode": "continuous",
-    "add_subtitles": true
-  }'
+  -d '{"video_url": "https://youtu.be/example", "mode": "continuous", "add_subtitles": true}'
 ```
 
-**Check job status:**
+Check status:
 ```bash
 curl http://localhost:8000/api/status/{job_id}
 ```
 
-**Download processed video:**
+Download result:
 ```bash
 curl http://localhost:8000/api/download/{job_id} -o output.mp4
 ```
 
 #### Frontend Integration
+See API.md for full documentation, including JavaScript examples.
 
-See [API.md](API.md) for complete API documentation including:
-- Full endpoint specifications
-- Request/response examples
-- Frontend integration code (React, JavaScript)
-- Error handling
-- Processing modes
+## Workflow Overview
 
-**Quick Example** (JavaScript/React):
-```javascript
-// Submit video
-const response = await fetch('http://localhost:8000/api/process', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    video_url: 'https://youtu.be/dKMueTMW1Nw',
-    mode: 'multi_segment'
-  })
-});
+1. Load video from URL or file
+2. Choose resolution (auto highest after 5s)
+3. Extract audio to WAV
+4. Transcribe with Whisper (~30s for 5min video)
+5. AI selects engaging segment
+6. Approve or regenerate (auto-approve after 15s)
+7. Crop selected clip
+8. Apply smart cropping (face-centered or motion-tracked)
+9. Generate subtitles with styling
+10. Merge audio and video
+11. Clean up temp files
 
-const { job_id } = await response.json();
+Output: `{title}_{session-id}_short.mp4`
 
-// Poll for status
-const checkStatus = async () => {
-  const res = await fetch(`http://localhost:8000/api/status/${job_id}`);
-  const data = await res.json();
-  
-  if (data.status === 'completed') {
-    // Download video
-    window.location.href = `http://localhost:8000/api/download/${job_id}`;
-  }
-};
+## Interactive Options
+
+After segment selection:
+```
+Selected: 68s - 187s (119s)
+Options: [Enter/y] approve, [r] regenerate, [n] cancel
+Auto-approve in 15s...
 ```
 
----
+## Customization
 
-## Resolution Selection
+### Subtitles
+In `Components/Subtitles.py`:
+- Font: line 51
+- Size: line 47
+- Color: line 48
+- Outline: lines 49-50
 
-When downloading from YouTube, you'll see:
-```
-Available video streams:
-  0. Resolution: 1080p, Size: 45.2 MB, Type: Adaptive
-  1. Resolution: 720p, Size: 28.1 MB, Type: Adaptive
-  2. Resolution: 480p, Size: 15.3 MB, Type: Adaptive
-
-Select resolution number (0-2) or wait 5s for auto-select...
-Auto-selecting highest quality in 5 seconds...
-```
-
-- **Enter a number** to select that resolution immediately
-- **Wait 5 seconds** to auto-select highest quality (1080p)
-- **Invalid input** falls back to highest quality
-
-## How It Works
-
-1. **Download/Load**: Fetches from YouTube or loads local file
-2. **Resolution Selection**: Choose video quality (5s timeout, auto-selects highest)
-3. **Extract Audio**: Converts to WAV format
-4. **Transcribe**: GPU-accelerated Whisper transcription (~30s for 5min video)
-5. **AI Analysis**: GPT-4o-mini selects most engaging 2-minute segment
-6. **Interactive Approval**: Review selection, regenerate if needed, or auto-approve in 15s
-7. **Extract Clip**: Crops selected timeframe
-8. **Smart Crop**: 
-   - Detects faces → static face-centered vertical crop
-   - No faces → half-width screen recording with motion tracking
-9. **Add Subtitles**: Burns Franklin Gothic captions with blue text/black outline
-10. **Combine Audio**: Merges audio track with final video
-11. **Cleanup**: Removes all temporary files
-
-**Output**: `{video-title}_{session-id}_short.mp4` with slugified filename and unique identifier
-
-## Interactive Workflow
-
-After AI selects a highlight, you'll see:
-
-```
-============================================================
-SELECTED SEGMENT DETAILS:
-Time: 68s - 187s (119s duration)
-============================================================
-
-Options:
-  [Enter/y] Approve and continue
-  [r] Regenerate selection
-  [n] Cancel
-
-Auto-approving in 15 seconds if no input...
-```
-
-- Press **Enter** or **y** to approve
-- Press **r** to regenerate a different selection (can repeat multiple times)
-- Press **n** to cancel
-- Wait 15 seconds to auto-approve (perfect for automation)
-
-## Configuration
-
-### Subtitle Styling
-Edit `Components/Subtitles.py`:
-- **Font**: Line 51 (`font='Franklin-Gothic'`)
-- **Size**: Line 47 (`fontsize=80`)
-- **Color**: Line 48 (`color='#2699ff'`)
-- **Outline**: Lines 49-50 (`stroke_color='black'`, `stroke_width=2`)
-
-### Highlight Selection Criteria
-Edit `Components/LanguageTasks.py`:
-- **Prompt**: Line 29 (adjust what's "interesting, useful, surprising, controversial, or thought-provoking")
-- **Model**: Line 54 (`model="gpt-4o-mini"`)
-- **Temperature**: Line 55 (`temperature=1.0`)
+### AI Selection
+In `Components/LanguageTasks.py`:
+- Prompt: line 29
+- Model: line 54
+- Temperature: line 55
 
 ### Motion Tracking
-Edit `Components/FaceCrop.py`:
-- **Update frequency**: Line 93 (`update_interval = int(fps)`) - currently 1 shift/second
-- **Smoothing**: Line 115 (`0.90 * smoothed_x + 0.10 * target_x`) - currently 90%/10%
-- **Motion threshold**: Line 107 (`motion_threshold = 2.0`)
+In `Components/FaceCrop.py`:
+- Update rate: line 93
+- Smoothing: line 115
+- Threshold: line 107
 
 ### Face Detection
-Edit `Components/FaceCrop.py`:
-- **Sensitivity**: Line 37 (`minNeighbors=8`) - Higher = fewer false positives
-- **Minimum size**: Line 37 (`minSize=(30, 30)`) - Minimum face size in pixels
+In `Components/FaceCrop.py`:
+- Sensitivity: line 37
+- Min size: line 37
 
-### Video Quality
-Edit `Components/Subtitles.py` and `Components/FaceCrop.py`:
-- **Bitrate**: Subtitles.py line 74 (`bitrate='3000k'`)
-- **Preset**: Subtitles.py line 73 (`preset='medium'`)
+### Quality Settings
+In `Components/Subtitles.py` and `Components/FaceCrop.py`:
+- Bitrate: line 74
+- Preset: line 73
 
-## Output Files
+## Output Naming
 
-Final videos are named: `{video-title}_{session-id}_short.mp4`
+Files: `{slugified-title}_{session-id}_short.mp4`
 
-Example: `my-awesome-video_a1b2c3d4_short.mp4`
+Example: `my-video-title_a1b2c3d4_short.mp4`
 
-- **Slugified title**: Lowercase, hyphens instead of spaces
-- **Session ID**: 8-character unique identifier for traceability
-- **Resolution**: Matches source video height (720p → 404x720, 1080p → 607x1080)
+- Slugified: lowercase, hyphens for spaces
+- Session ID: 8-char unique code
+- Resolution: matches source height
 
-## Concurrent Execution
+## Running Multiple Instances
 
-Run multiple instances simultaneously:
 ```bash
-./run.sh "https://youtu.be/VIDEO1" &
-./run.sh "https://youtu.be/VIDEO2" &
-./run.sh "/path/to/video3.mp4" &
+./run.sh "url1" &
+./run.sh "url2" &
+./run.sh "file3.mp4" &
 ```
 
-Each instance gets a unique session ID and temporary files, preventing conflicts.
+Each gets unique ID and temp files.
 
 ## Troubleshooting
 
-### CUDA/GPU Issues
+### GPU/CUDA Problems
 ```bash
-# Verify CUDA libraries
 export LD_LIBRARY_PATH=$(find $(pwd)/venv/lib/python3.10/site-packages/nvidia -name "lib" -type d | paste -sd ":" -)
 ```
-The `run.sh` script handles this automatically.
+Handled automatically by run.sh.
 
-### No Subtitles
-Ensure ImageMagick policy allows file operations:
+### Subtitle Issues
+Check ImageMagick policy:
 ```bash
 grep 'pattern="@\*"' /etc/ImageMagick-6/policy.xml
-# Should show: rights="read|write"
+# Should show rights="read|write"
 ```
 
-### Face Detection Issues
-- Video needs visible faces in first 30 frames
-- For screen recordings, automatic motion tracking applies
-- Low-resolution videos may have less reliable detection
-
-## Contributing
-
-Contributions are welcome! Please fork the repository and submit a pull request.
+### Face Detection
+- Needs faces in first 30 frames
+- Screen recordings use motion tracking
+- Low res may reduce accuracy
 
 ## License
 
-This project is licensed under the MIT License.
-
-## Related Projects
-
-- [AI Influencer Generator](https://github.com/SamurAIGPT/AI-Influencer-Generator)
-- [Text to Video AI](https://github.com/SamurAIGPT/Text-To-Video-AI)
-- [Faceless Video Generator](https://github.com/SamurAIGPT/Faceless-Video-Generator)
-- [AI B-roll Generator](https://github.com/Anil-matcha/AI-B-roll)
-- [No-code YouTube Shorts Generator](https://www.vadoo.tv/clip-youtube-video)
+MIT License
 
