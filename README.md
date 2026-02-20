@@ -1,4 +1,4 @@
-# ZipClip Backend
+# ZipClip (Backend)
 
 An AI-powered tool for generating engaging YouTube Shorts from longer videos. Utilizes GPT-4o-mini and Whisper to identify highlights, generate subtitles, and format videos for vertical social media platforms.
 
