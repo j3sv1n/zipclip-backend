@@ -153,9 +153,35 @@ def crop_to_vertical(input_video_path, output_video_path):
             # Face-detected videos: static crop
             cropped_frame = frame[:, x_start:x_start+vertical_width]
         
-        if cropped_frame.shape[1] == 0:
+        # Ensure final frame matches exact vertical dimensions (vertical_width x vertical_height)
+        # If the crop is smaller (due to scaling), pad with black; if larger, crop to fit.
+        if cropped_frame is None or cropped_frame.size == 0 or cropped_frame.shape[1] == 0:
             print(f"Warning: Empty crop at frame {frame_count}")
             break
+
+        ch = 3 if len(cropped_frame.shape) == 3 else 1
+        h, w = cropped_frame.shape[0], cropped_frame.shape[1]
+
+        # If too tall or too wide, trim to exact size
+        if h > vertical_height or w > vertical_width:
+            cropped_frame = cropped_frame[:vertical_height, :vertical_width]
+
+        # Recompute sizes after potential trim
+        h, w = cropped_frame.shape[0], cropped_frame.shape[1]
+
+        # If smaller in either dimension, pad with black to reach exact size
+        if h < vertical_height or w < vertical_width:
+            if ch == 1:
+                canvas = np.zeros((vertical_height, vertical_width), dtype=cropped_frame.dtype)
+                y_offset = (vertical_height - h) // 2
+                x_offset = (vertical_width - w) // 2
+                canvas[y_offset:y_offset+h, x_offset:x_offset+w] = cropped_frame
+            else:
+                canvas = np.zeros((vertical_height, vertical_width, 3), dtype=cropped_frame.dtype)
+                y_offset = (vertical_height - h) // 2
+                x_offset = (vertical_width - w) // 2
+                canvas[y_offset:y_offset+h, x_offset:x_offset+w, :] = cropped_frame
+            cropped_frame = canvas
         
         out.write(cropped_frame)
         frame_count += 1
