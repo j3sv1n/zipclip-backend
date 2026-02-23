@@ -35,11 +35,11 @@ def create_styled_subtitle_image(text_data, width, fontsize, font_path=None, act
         font = ImageFont.load_default()
         bold_font = font
 
-    # Process text into words
+    # Process text into words and force ALL CAPS
     if isinstance(text_data, str):
-        words = text_data.split()
+        words = text_data.upper().split()
     else:
-        words = text_data
+        words = [w.upper() for w in text_data]
 
     # Calculate total width to center the whole line
     # We use bold_font for measurements to have a consistent center
@@ -120,7 +120,8 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
     word_chunks = split_transcription_to_words(transcriptions, words_per_chunk=words_per_subtitle)
     
     text_clips = []
-    dynamic_fontsize = int(video.h * 0.08) 
+    # Make subtitles smaller (reduced from 8% to 5.5% of video height)
+    dynamic_fontsize = int(video.h * 0.055)
     
     font_paths = [
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
