@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from moviepy.editor import *
 from Components.Speaker import detect_faces_and_speakers, Frames
+from Components.SceneDetection import detect_scenes
 global Fps
 
 def crop_to_vertical(input_video_path, output_video_path):
@@ -61,6 +62,98 @@ def crop_to_vertical(input_video_path, output_video_path):
     # Reset video to beginning
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
+    # Detect scenes and compute per-scene target crop positions (in source coordinates)
+    print("Detecting scenes for per-scene crop targets...")
+    try:
+        scenes = detect_scenes(input_video_path)
+    except Exception as e:
+        print(f"Scene detection failed: {e}")
+        scenes = []
+
+    if not scenes:
+        scenes = [(0, total_frames / fps if fps > 0 else total_frames)]
+
+    # Convert scene times to frame indices
+    scene_frame_ranges = []
+    for start_s, end_s in scenes:
+        start_f = int(start_s * fps)
+        end_f = int(end_s * fps)
+        start_f = max(0, min(start_f, total_frames - 1))
+        end_f = max(start_f + 1, min(end_f, total_frames))
+        scene_frame_ranges.append((start_f, end_f))
+
+    # For each scene, sample a few frames to determine best horizontal crop center
+    scene_targets = []  # target x (in original coords) for each scene
+    sample_per_scene = 5
+    for (s_f, e_f) in scene_frame_ranges:
+        sample_idxs = np.linspace(s_f, e_f - 1, min(sample_per_scene, max(1, e_f - s_f)), dtype=int)
+        face_centers = []
+        col_scores = None
+
+        for idx in sample_idxs:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+            ret, sample_frame = cap.read()
+            if not ret:
+                continue
+
+            # If scaling will be applied later for screen recordings, compute on scaled frame
+            if use_motion_tracking:
+                working_frame = cv2.resize(sample_frame, (scaled_width, scaled_height), interpolation=cv2.INTER_LANCZOS4)
+                frame_gray = cv2.cvtColor(working_frame, cv2.COLOR_BGR2GRAY)
+            else:
+                working_frame = sample_frame
+                frame_gray = cv2.cvtColor(working_frame, cv2.COLOR_BGR2GRAY)
+
+            faces = face_cascade.detectMultiScale(frame_gray, scaleFactor=1.1, minNeighbors=8, minSize=(30, 30))
+            if len(faces) > 0:
+                best_face = max(faces, key=lambda f: f[2] * f[3])
+                x, y, w, h = best_face
+                face_center_x = x + w // 2
+                # If working on scaled frame, convert back to original coordinate scale
+                if use_motion_tracking:
+                    # map scaled x back to original coordinates via scale factor
+                    orig_x = int(face_center_x / scale)
+                    face_centers.append(orig_x)
+                else:
+                    face_centers.append(face_center_x)
+
+            # Compute visual saliency-like column scores using Sobel gradient magnitude
+            sobelx = np.abs(cv2.Sobel(frame_gray, cv2.CV_64F, 1, 0, ksize=3))
+            col_sum = np.sum(sobelx, axis=0)
+            if col_scores is None:
+                col_scores = col_sum
+            else:
+                col_scores = col_scores + col_sum
+
+        # Determine target x for this scene
+        if face_centers:
+            median_face_x = int(sorted(face_centers)[len(face_centers) // 2])
+            # offset to the right slightly to avoid cropping mouth/chin
+            median_face_x += 60
+            target_x = max(0, min(median_face_x - vertical_width // 2, original_width - vertical_width))
+            scene_targets.append(target_x)
+        else:
+            if col_scores is None:
+                # fallback center
+                scene_targets.append(max(0, min(original_width // 2 - vertical_width // 2, original_width - vertical_width)))
+            else:
+                # If col_scores corresponds to scaled width, map indices to original coords
+                if use_motion_tracking:
+                    # col_scores length equals scaled_width
+                    cols = np.arange(len(col_scores))
+                    weighted = np.average(cols, weights=col_scores)
+                    motion_x_scaled = int(weighted)
+                    motion_x_orig = int(motion_x_scaled / scale)
+                    target_x = max(0, min(motion_x_orig - vertical_width // 2, original_width - vertical_width))
+                else:
+                    cols = np.arange(len(col_scores))
+                    weighted = int(np.average(cols, weights=col_scores))
+                    target_x = max(0, min(weighted - vertical_width // 2, original_width - vertical_width))
+                scene_targets.append(target_x)
+
+    # Reset to beginning for main processing loop
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
     # For screen recordings, calculate scale factor for half-width display
     if use_motion_tracking:
         # Scale so original width fits into vertical_width
@@ -93,42 +186,62 @@ def crop_to_vertical(input_video_path, output_video_path):
         update_interval = int(fps)  # Update once per second
         print(f"Motion tracking: updating every {update_interval} frames (~1 shift/second)")
     
+    current_scene_idx = 0
+    # Initialize smoothed_x to first scene target (scaled coords if needed)
+    first_target = scene_targets[0] if scene_targets else 0
+    if use_motion_tracking:
+        smoothed_x = int(first_target * scale)
+    else:
+        smoothed_x = first_target
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
+
+        # Determine current scene index based on frame_count
+        while current_scene_idx + 1 < len(scene_frame_ranges) and frame_count >= scene_frame_ranges[current_scene_idx][1]:
+            current_scene_idx += 1
         
         if use_motion_tracking:
             # Resize frame first
             resized_frame = cv2.resize(frame, (scaled_width, scaled_height), interpolation=cv2.INTER_LANCZOS4)
-            
-            # Update motion tracking once per second
+            # Update motion tracking once per second (optical flow) but also nudge toward scene target
             if frame_count % update_interval == 0:
                 curr_gray = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY)
-                
+
                 if prev_gray is not None:
                     # Calculate optical flow
                     flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None,
                                                          0.5, 3, 15, 3, 5, 1.2, 0)
                     magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
-                    
-                    # Focus on significant motion
                     motion_threshold = 2.0
                     significant_motion = magnitude > motion_threshold
-                    
+
                     if np.any(significant_motion):
-                        # Weight columns by motion
                         col_motion = np.sum(magnitude * significant_motion, axis=0)
-                        
                         if np.sum(col_motion) > 0:
                             motion_x = int(np.average(np.arange(scaled_width), weights=col_motion))
-                            # Target x position to center motion in the crop
-                            target_x = max(0, min(motion_x - vertical_width // 2, scaled_width - vertical_width))
-                            
-                            # Smooth tracking (90% previous, 10% new)
-                            smoothed_x = int(0.90 * smoothed_x + 0.10 * target_x)
-                
+                            target_x_motion = max(0, min(motion_x - vertical_width // 2, scaled_width - vertical_width))
+                        else:
+                            target_x_motion = smoothed_x
+                    else:
+                        target_x_motion = smoothed_x
+                else:
+                    target_x_motion = smoothed_x
+
                 prev_gray = curr_gray
+
+            # Scene-based target (convert scene target to scaled coords)
+            scene_target_orig = scene_targets[current_scene_idx]
+            scene_target_scaled = int(scene_target_orig * scale)
+
+            # Blend motion target and scene target: prefer scene target but allow motion nudges
+            # Compute desired target: 80% scene target, 20% motion target
+            desired_target = int(0.80 * scene_target_scaled + 0.20 * (locals().get('target_x_motion', smoothed_x)))
+
+            # Smoothly approach desired target each frame
+            smoothed_x = int(0.90 * smoothed_x + 0.10 * desired_target)
             
             # Crop from scaled frame
             crop_x_start = int(smoothed_x)
@@ -150,8 +263,12 @@ def crop_to_vertical(input_video_path, output_video_path):
                 # Crop height from top
                 cropped_frame = cropped_frame[:vertical_height, :]
         else:
-            # Face-detected videos: static crop
-            cropped_frame = frame[:, x_start:x_start+vertical_width]
+            # Face-detected videos (or scene-based static crops): determine scene target and crop accordingly
+            scene_target = scene_targets[current_scene_idx] if scene_targets else x_start
+            crop_x = int(scene_target)
+            # Ensure bounds
+            crop_x = max(0, min(crop_x, original_width - vertical_width))
+            cropped_frame = frame[:, crop_x:crop_x+vertical_width]
         
         # Ensure final frame matches exact vertical dimensions (vertical_width x vertical_height)
         # If the crop is smaller (due to scaling), pad with black; if larger, crop to fit.
