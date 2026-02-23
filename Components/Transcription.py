@@ -8,10 +8,28 @@ def transcribeAudio(audio_path):
         print(Device)
         model = WhisperModel("base.en", device="cuda" if torch.cuda.is_available() else "cpu")
         print("Model loaded")
-        segments, info = model.transcribe(audio=audio_path, beam_size=5, language="en", max_new_tokens=128, condition_on_previous_text=False)
+        segments, info = model.transcribe(audio=audio_path, beam_size=5, language="en", max_new_tokens=128, condition_on_previous_text=False, word_timestamps=True)
         segments = list(segments)
-        # print(segments)
-        extracted_texts = [[segment.text, segment.start, segment.end] for segment in segments]
+        
+        extracted_texts = []
+        for segment in segments:
+            # Extract word-level details if available
+            words = []
+            if segment.words:
+                for word in segment.words:
+                    words.append({
+                        "text": word.word,
+                        "start": word.start,
+                        "end": word.end
+                    })
+            
+            extracted_texts.append({
+                "text": segment.text.strip(),
+                "start": segment.start,
+                "end": segment.end,
+                "words": words
+            })
+            
         print(f"✓ Transcription complete: {len(extracted_texts)} segments extracted")
         return extracted_texts
     except Exception as e:
@@ -20,37 +38,51 @@ def transcribeAudio(audio_path):
 
 def split_transcription_to_words(transcriptions, words_per_chunk=2):
     """
-    Split transcription segments into chunks of 2-3 words with word-level timing.
+    Split transcription segments into chunks of words using PRECISE word-level timing.
     
     Args:
-        transcriptions: List of [text, start, end] from transcribeAudio
-        words_per_chunk: Number of words to group together (default: 2)
+        transcriptions: List of dicts with 'text', 'start', 'end', and 'words'
+        words_per_chunk: Number of words to group together
     
     Returns:
-        List of [text, start, end] with word-level timing
+        List of dicts with 'text', 'start', 'end', and 'highlight_word_index'
     """
     word_chunks = []
     
-    for text, segment_start, segment_end in transcriptions:
-        # Split text into words
-        words = text.strip().split()
+    for segment in transcriptions:
+        words = segment.get('words', [])
+        
+        # Fallback to linear split if word timestamps are missing
         if not words:
+            text_words = segment['text'].split()
+            if not text_words: continue
+            
+            duration = segment['end'] - segment['start']
+            time_per_word = duration / len(text_words)
+            
+            for i in range(0, len(text_words), words_per_chunk):
+                chunk = text_words[i:i + words_per_chunk]
+                word_chunks.append({
+                    "text": " ".join(chunk),
+                    "start": segment['start'] + (i * time_per_word),
+                    "end": segment['start'] + ((i + len(chunk)) * time_per_word),
+                    "all_words": chunk,
+                    "word_timings": [] # No precise timings
+                })
             continue
-        
-        # Calculate time per word
-        segment_duration = segment_end - segment_start
-        time_per_word = segment_duration / len(words) if words else 0
-        
-        # Group words into chunks
+
+        # Use precise word timestamps
         for i in range(0, len(words), words_per_chunk):
-            chunk_words = words[i:i + words_per_chunk]
-            chunk_text = ' '.join(chunk_words)
+            chunk_data = words[i:i + words_per_chunk]
+            chunk_text = " ".join([w['text'].strip() for w in chunk_data])
             
-            # Calculate timing for this chunk
-            chunk_start = segment_start + (i * time_per_word)
-            chunk_end = segment_start + ((i + len(chunk_words)) * time_per_word)
-            
-            word_chunks.append([chunk_text, chunk_start, chunk_end])
+            word_chunks.append({
+                "text": chunk_text,
+                "start": chunk_data[0]['start'],
+                "end": chunk_data[-1]['end'],
+                "all_words": [w['text'].strip() for w in chunk_data],
+                "word_timings": chunk_data
+            })
     
     return word_chunks
 
@@ -60,6 +92,6 @@ if __name__ == "__main__":
     # print("Done")
     TransText = ""
 
-    for text, start, end in transcriptions:
-        TransText += (f"{start} - {end}: {text}")
+    for segment in transcriptions:
+        TransText += (f"{segment['start']} - {segment['end']}: {segment['text']}\n")
     print(TransText)
