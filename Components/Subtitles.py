@@ -19,21 +19,34 @@ def create_styled_subtitle_image(text_data, width, fontsize, font_path=None, act
     Returns:
         PIL Image
     """
-    height = int(fontsize * 3)
-    img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    
-    try:
-        if font_path:
-            font = ImageFont.truetype(font_path, fontsize)
-            bold_font = ImageFont.truetype(font_path, int(fontsize * 1.1))
-        else:
-            # Try liberation bold as a primary choice for a professional look
-            font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", fontsize)
-            bold_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", int(fontsize * 1.1))
-    except:
-        font = ImageFont.load_default()
-        bold_font = font
+    # Ensure text will fit horizontally: reserve horizontal padding so
+    # subtitles never touch the left/right edges. Use at least 24px or 4%.
+    padding = max(24, int(width * 0.04))
+    max_width = max(16, width - (padding * 2))
+    cur_fs = int(fontsize)
+    final_font = None
+    final_bold = None
+
+    # Prepare words early (uppercase handled below)
+    # We'll measure using a temporary draw surface
+    measure_img = Image.new('RGBA', (width, 10), (0, 0, 0, 0))
+    measure_draw = ImageDraw.Draw(measure_img)
+
+    while True:
+        try:
+            if font_path:
+                test_font = ImageFont.truetype(font_path, cur_fs)
+                test_bold = ImageFont.truetype(font_path, int(cur_fs * 1.1))
+            else:
+                test_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", cur_fs)
+                test_bold = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", int(cur_fs * 1.1))
+        except Exception:
+            test_font = ImageFont.load_default()
+            test_bold = test_font
+
+        # Measure text width
+        # (words variable set later; use a small placeholder for now)
+        break
 
     # Process text into words and force ALL CAPS
     if isinstance(text_data, str):
@@ -41,13 +54,65 @@ def create_styled_subtitle_image(text_data, width, fontsize, font_path=None, act
     else:
         words = [w.upper() for w in text_data]
 
+    # Now find a suitable font size that fits the width (if necessary)
+    cur_fs = int(cur_fs)
+    while True:
+        try:
+            if font_path:
+                font = ImageFont.truetype(font_path, cur_fs)
+                bold_font = ImageFont.truetype(font_path, int(cur_fs * 1.1))
+            else:
+                font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", cur_fs)
+                bold_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", int(cur_fs * 1.1))
+        except Exception:
+            font = ImageFont.load_default()
+            bold_font = font
+
+        # Create a temporary draw to measure text
+        measure_img = Image.new('RGBA', (width, 10), (0, 0, 0, 0))
+        measure_draw = ImageDraw.Draw(measure_img)
+
+        if len(words) == 0:
+            total_text_width = 0
+            space_width = measure_draw.textbbox((0, 0), " ", font=bold_font)[2]
+        else:
+            word_spacings = [measure_draw.textbbox((0, 0), w, font=bold_font)[2] for w in words]
+            space_width = measure_draw.textbbox((0, 0), " ", font=bold_font)[2]
+            total_text_width = sum(word_spacings) + (space_width * (len(words) - 1))
+
+        # If it fits or font is already small, accept it
+        if total_text_width <= max_width or cur_fs <= 12:
+            break
+
+        # Otherwise reduce font size proportionally and retry
+        new_fs = max(12, int(cur_fs * (max_width / float(total_text_width))))
+        if new_fs >= cur_fs:
+            new_fs = cur_fs - 1
+        cur_fs = new_fs
+
+    # With chosen font sizes compute final image height and draw
+    height = int(cur_fs * 3)
+    img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Recreate actual font objects for drawing (use cur_fs)
+    try:
+        if font_path:
+            font = ImageFont.truetype(font_path, cur_fs)
+            bold_font = ImageFont.truetype(font_path, int(cur_fs * 1.1))
+        else:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", cur_fs)
+            bold_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", int(cur_fs * 1.1))
+    except Exception:
+        font = ImageFont.load_default()
+        bold_font = font
+
     # Calculate total width to center the whole line
-    # We use bold_font for measurements to have a consistent center
-    word_spacings = [draw.textbbox((0, 0), w, font=bold_font)[2] for w in words]
+    word_spacings = [draw.textbbox((0, 0), w, font=bold_font)[2] for w in words] if words else []
     space_width = draw.textbbox((0, 0), " ", font=bold_font)[2]
-    total_text_width = sum(word_spacings) + (space_width * (len(words) - 1))
-    
-    start_x = (width - total_text_width) // 2
+    total_text_width = sum(word_spacings) + (space_width * (len(words) - 1)) if words else 0
+
+    start_x = max(padding, (width - total_text_width) // 2)
     y = height // 4
     
     # Draw dropshadow for the whole line first
