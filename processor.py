@@ -103,8 +103,8 @@ def process_video(
         
         # Build transcription text
         TransText = ""
-        for text, start, end in transcriptions:
-            TransText += f"{start} - {end}: {text}\n"
+        for segment in transcriptions:
+            TransText += f"{segment['start']} - {segment['end']}: {segment['text']}\n"
         
         # Process based on mode
         segments = None
@@ -168,8 +168,14 @@ def process_video(
         
         if add_subtitles:
             update_progress("Adding subtitles...", 85)
-            video_start = segments[0]['start'] if segments else 0
-            add_subtitles_to_video(temp_cropped, temp_subtitled, transcriptions, video_start_time=video_start)
+            # Pass all segments for correct timing mapping
+            add_subtitles_to_video(
+                temp_cropped, 
+                temp_subtitled, 
+                transcriptions, 
+                segments=segments,
+                subtitle_offset=0.0 # Can be made configurable if needed
+            )
             
             update_progress("Adding audio to final video...", 90)
             combine_videos(temp_clip, temp_subtitled, final_output)

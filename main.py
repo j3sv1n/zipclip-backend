@@ -109,8 +109,8 @@ if Vid:
             print(f"{'='*60}\n")
             TransText = ""
 
-            for text, start, end in transcriptions:
-                TransText += (f"{start} - {end}: {text}\n")
+            for segment in transcriptions:
+                TransText += (f"{segment['start']} - {segment['end']}: {segment['text']}\n")
 
             # Route to appropriate processing mode
             segments = None
@@ -265,9 +265,13 @@ if Vid:
                 
                 if add_subtitles:
                     print("Step 3/4: Adding subtitles to video...")
-                    # For subtitles, we use the start time of the first segment
-                    video_start = segments[0]['start'] if segments else 0
-                    add_subtitles_to_video(temp_cropped, temp_subtitled, transcriptions, video_start_time=video_start)
+                    # Pass all segments for correct timing mapping
+                    add_subtitles_to_video(
+                        temp_cropped, 
+                        temp_subtitled, 
+                        transcriptions, 
+                        segments=segments
+                    )
                     
                     print("Step 4/4: Adding audio to final video...")
                     combine_videos(temp_clip, temp_subtitled, final_output)
