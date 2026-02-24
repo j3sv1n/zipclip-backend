@@ -62,6 +62,25 @@ def crop_to_vertical(input_video_path, output_video_path):
     # Reset video to beginning
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
+    # For screen recordings, pre-calculate scale factor so sampling can use scaled frames
+    scale = 1.0
+    scaled_width = original_width
+    scaled_height = original_height
+    if use_motion_tracking:
+        # Scale so original width fits into vertical_width (use 0.67 visible fraction)
+        target_display_width = original_width * 0.67
+        scale = vertical_width / target_display_width
+        scaled_width = int(original_width * scale)
+        scaled_height = int(original_height * scale)
+        # If scaled height exceeds vertical height, adjust scale
+        if scaled_height > vertical_height:
+            scale = vertical_height / original_height
+            scaled_width = int(original_width * scale)
+            scaled_height = int(original_height * scale)
+
+        print(f"Scaling video from {original_width}x{original_height} to {scaled_width}x{scaled_height}")
+        print(f"Half-width display: showing {scaled_width//2}px wide section from {scaled_width}px scaled frame")
+
     # Detect scenes and compute per-scene target crop positions (in source coordinates)
     print("Detecting scenes for per-scene crop targets...")
     try:
@@ -154,22 +173,7 @@ def crop_to_vertical(input_video_path, output_video_path):
     # Reset to beginning for main processing loop
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-    # For screen recordings, calculate scale factor for half-width display
-    if use_motion_tracking:
-        # Scale so original width fits into vertical_width
-        target_display_width = original_width * 0.67
-        scale = vertical_width / target_display_width
-        scaled_width = int(original_width * scale)
-        scaled_height = int(original_height * scale)
-        
-        # If scaled height exceeds vertical height, adjust scale
-        if scaled_height > vertical_height:
-            scale = vertical_height / original_height
-            scaled_width = int(original_width * scale)
-            scaled_height = int(original_height * scale)
-        
-        print(f"Scaling video from {original_width}x{original_height} to {scaled_width}x{scaled_height}")
-        print(f"Half-width display: showing {scaled_width//2}px wide section from {scaled_width}px scaled frame")
+    # scaled_width/height and scale already computed above when needed
 
     # Write output
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
