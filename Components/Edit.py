@@ -178,7 +178,11 @@ def stitch_video_segments(input_file, segments, output_file):
 
         # Attempt to load a user-supplied light-leak asset from assets/light_leaks
         def _load_asset_light_leak(duration, size):
-            folder = os.path.join(os.getcwd(), "assets", "light_leaks")
+            # Prefer the assets folder inside this Components package (Components/assets/light_leaks)
+            folder = os.path.join(os.path.dirname(__file__), "assets", "light_leaks")
+            # Fallback to repo-root assets/light_leaks for backward compatibility
+            if not os.path.isdir(folder):
+                folder = os.path.join(os.getcwd(), "assets", "light_leaks")
             if not os.path.isdir(folder):
                 return None
             candidates = []
