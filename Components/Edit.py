@@ -1,6 +1,10 @@
 from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.editor import VideoFileClip, concatenate_videoclips
+from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip, ColorClip, vfx
 import subprocess
+import numpy as np
+import os
+import random
+import cv2
 
 def extractAudio(video_path, audio_path="audio.wav"):
     try:
@@ -71,19 +75,325 @@ def stitch_video_segments(input_file, segments, output_file):
             return False
         
         print(f"  Total duration of stitched video: {total_duration:.2f}s")
-        print("  Concatenating clips...")
-        
-        # Concatenate all clips
-        final_clip = concatenate_videoclips(clips, method="compose")
-        
+        print("  Determining intelligent transitions and building timeline...")
+
+        # Helper: get a representative frame from a clip (time offset seconds from start)
+        def _get_frame_safe(clip, t_offset=0.1):
+            try:
+                t = min(max(t_offset, 0), max(0, clip.duration - 0.01))
+                return clip.get_frame(t)
+            except Exception:
+                return None
+
+        # Helper: compute normalized mean absolute difference between two frames
+        def _frame_diff(f1, f2):
+            if f1 is None or f2 is None:
+                return 1.0
+            try:
+                f1 = f1.astype('float32') / 255.0
+                f2 = f2.astype('float32') / 255.0
+                return float(np.mean(np.abs(f1 - f2)))
+            except Exception:
+                return 1.0
+
+        # Decide transition type between two clips
+        def _choose_transition(clip_a, clip_b):
+            # Very short clips => hard cut
+            if clip_a.duration < 1.5 or clip_b.duration < 1.5:
+                return ('cut', 0)
+
+            # Compute difference between last frame of A and first frame of B
+            frame_a = None
+            frame_b = None
+            try:
+                frame_a = clip_a.get_frame(max(0, clip_a.duration - 0.05))
+            except Exception:
+                frame_a = _get_frame_safe(clip_a, clip_a.duration/2 if clip_a.duration>0 else 0)
+            try:
+                frame_b = clip_b.get_frame(0.05)
+            except Exception:
+                frame_b = _get_frame_safe(clip_b, 0.1)
+
+            diff = _frame_diff(frame_a, frame_b)
+            # debug log selection
+            #print(f"transition diff={diff:.3f}")
+
+            # Very similar frames -> cross-dissolve (slightly more permissive)
+            if diff < 0.15:
+                return ('crossfade', min(1.0, clip_a.duration/3, clip_b.duration/3))
+
+            # Increased range for simple fades
+            if diff < 0.30:
+                return ('fade', min(1.0, clip_a.duration/3, clip_b.duration/3))
+
+            # Occasionally insert a fade even if diff is larger, to break up heavy light leaks
+            if diff < 0.50 and random.random() < 0.2:
+                return ('fade', min(1.0, clip_a.duration/4, clip_b.duration/4))
+
+            # Very rare humorous transitions (wipe/push)
+            if random.random() < 0.05:
+                choice = random.choice(['wipe','push'])
+                return (choice, min(1.0, clip_a.duration/3, clip_b.duration/3))
+
+            # Very different -> light leak
+            return ('light_leak', min(0.8, clip_a.duration/4, clip_b.duration/4))
+
+        # Create a realistic animated light-leak ColorClip with a soft moving mask
+        def _create_light_leak_clip(size, duration, color=(255,200,150), max_alpha=0.6):
+            w, h = size
+
+            def make_mask(t):
+                # Normalized time in [0,1]
+                tt = float(t) / max(1e-6, duration)
+
+                # moving center across the frame with slight vertical drift
+                cx = int((0.1 + 0.8 * tt) * w)
+                cy = int((0.3 + 0.4 * (0.5 - abs(0.5 - tt))) * h)
+
+                # gaussian blob parameters
+                sigma_x = max(w * (0.15 + 0.25 * (1 - abs(0.5 - tt))), 20)
+                sigma_y = max(h * (0.25 + 0.15 * abs(0.5 - tt)), 20)
+
+                xs = np.arange(w)
+                ys = np.arange(h)
+                xv = (xs - cx) ** 2 / (2 * sigma_x * sigma_x)
+                yv = (ys - cy) ** 2 / (2 * sigma_y * sigma_y)
+                gv = np.exp(- (xv[np.newaxis, :] + yv[:, np.newaxis]))
+
+                # temporal envelope (fade in/out)
+                envelope = np.exp(-((tt - 0.5) ** 2) / (2 * 0.18 * 0.18))
+
+                mask = gv * envelope
+                # normalize to [0,1] and scale by max_alpha
+                mask = mask / (mask.max() + 1e-9)
+                mask = np.clip(mask * max_alpha, 0, 1)
+                return mask
+
+            from moviepy.video.VideoClip import VideoClip
+
+            mask_clip = VideoClip(lambda t: (make_mask(t) * 255).astype('uint8'), ismask=True).set_duration(duration)
+            color_clip = ColorClip(size=size, color=color).set_duration(duration)
+            color_clip = color_clip.set_mask(mask_clip)
+            return color_clip
+
+        # Attempt to load a user-supplied light-leak asset from assets/light_leaks
+        def _load_asset_light_leak(duration, size):
+            folder = os.path.join(os.getcwd(), "assets", "light_leaks")
+            if not os.path.isdir(folder):
+                return None
+            candidates = []
+            for fname in os.listdir(folder):
+                if fname.lower().endswith(('.mp4', '.mov', '.webm', '.mkv')):
+                    candidates.append(os.path.join(folder, fname))
+            if not candidates:
+                return None
+            path = random.choice(candidates)
+            try:
+                clip = VideoFileClip(path)
+            except Exception as e:
+                print(f"Warning: could not load light-leak asset {path}: {e}")
+                return None
+            # Trim or loop asset to match the requested transition duration
+            try:
+                if clip.duration is None:
+                    # unknown duration - resize and return
+                    clip = clip.resize(newsize=size)
+                else:
+                    if clip.duration > duration:
+                        start = max(0, (clip.duration - duration) / 2)
+                        clip = clip.subclip(start, start + duration)
+                    elif clip.duration < duration:
+                        clip = clip.fx(vfx.loop, duration=duration)
+                    # finally resize to target
+                    clip = clip.resize(newsize=size)
+                # convert to mask (brightness) for screen-style blending
+                mask = clip.to_mask()
+                clip = clip.set_mask(mask)
+                return clip
+            except Exception as e:
+                print(f"Warning: error processing light-leak asset {path}: {e}")
+                return None
+
+        def _suitable_for_light_leak(fa, fb):
+            # Heuristic to prefer light leaks for warm/bright/festive scenes
+            try:
+                def frame_stats(f):
+                    if f is None:
+                        return {'v':0.0, 's':0.0, 'warm':0.0}
+                    img = f.astype('uint8')
+                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+                    h,s,v = cv2.split(hsv)
+                    mean_s = float(np.mean(s) / 255.0)
+                    mean_v = float(np.mean(v) / 255.0)
+                    r = img[...,0].astype('int')
+                    g = img[...,1].astype('int')
+                    b = img[...,2].astype('int')
+                    warm_prop = float(np.mean((r > g) & (r > b)))
+                    return {'v': mean_v, 's': mean_s, 'warm': warm_prop}
+
+                a = frame_stats(fa)
+                b = frame_stats(fb)
+                mean_v = (a['v'] + b['v']) / 2.0
+                mean_s = (a['s'] + b['s']) / 2.0
+                mean_warm = (a['warm'] + b['warm']) / 2.0
+
+                # Conditions: bright & some warm tones OR saturated imagery
+                if (mean_v > 0.55 and mean_warm > 0.06) or (mean_s > 0.25):
+                    return True
+                return False
+            except Exception:
+                return True
+
+        # Expand clips slightly to accommodate transitions where possible
+        expanded_clips = []
+        clip_meta = []
+
+        for i, segment in enumerate(segments):
+            start = max(0, segment['start'])
+            end = min(max_time, segment['end'])
+            # We will expand by up to 1s on either side if possible; exact overlap depends on neighbors
+            expanded_clips.append({'start': start, 'end': end})
+
+        # Pre-extract raw clips (we'll adjust starts when building timeline)
+        raw_clips = []
+        for seg in expanded_clips:
+            clip = video.subclip(seg['start'], seg['end']).fx(vfx.freeze, t=0) if False else video.subclip(seg['start'], seg['end'])
+            raw_clips.append(clip)
+
+        # Build timeline with start times and overlays
+        timeline_clips = []
+        overlays = []
+        current_time = 0.0
+
+        for i, clip in enumerate(raw_clips):
+            if i == 0:
+                # first clip starts at 0
+                clip_start = 0.0
+                timeline_clips.append(clip.set_start(clip_start))
+                current_time = clip_start + clip.duration
+                continue
+
+            prev = raw_clips[i-1]
+            trans_type, trans_dur = _choose_transition(prev, clip)
+
+            if trans_type == 'cut' or trans_dur <= 0:
+                # hard cut
+                clip_start = current_time
+                timeline_clips.append(clip.set_start(clip_start))
+                current_time = clip_start + clip.duration
+
+            elif trans_type == 'fade':
+                # apply fade out to previous and fade in to next without overlap
+                prev_faded = timeline_clips[-1].fx(vfx.fadeout, trans_dur)
+                timeline_clips[-1] = prev_faded
+                clip_faded = clip.fx(vfx.fadein, trans_dur)
+                clip_start = current_time
+                timeline_clips.append(clip_faded.set_start(clip_start))
+                current_time = clip_start + clip.duration
+
+            elif trans_type == 'crossfade':
+                # Overlap clips by trans_dur
+                # reposition current clip so it starts trans_dur before prev ends
+                clip_start = current_time - trans_dur
+                if clip_start < 0:
+                    clip_start = 0
+                # ensure crossfadein applied to incoming clip
+                clip_cf = clip.crossfadein(trans_dur)
+                timeline_clips.append(clip_cf.set_start(clip_start))
+                current_time = clip_start + clip.duration
+
+            elif trans_type in ('wipe','push'):
+                # Rare stylized slide transitions
+                clip_start = current_time - trans_dur
+                if clip_start < 0:
+                    clip_start = 0
+                try:
+                    w, h = clip.size
+                except Exception:
+                    w, h = video.size
+                # direction: wipe = left-to-right slide in, push = right-to-left
+                if trans_type == 'wipe':
+                    start_x = w
+                    end_x = 0
+                else:
+                    start_x = -w
+                    end_x = 0
+                def position_func(t):
+                    tt = (t - clip_start) / trans_dur
+                    tt = max(0, min(1, tt))
+                    return (int(start_x + (end_x - start_x) * tt), 0)
+                moving = clip.set_start(clip_start).set_position(position_func)
+                timeline_clips.append(moving)
+                current_time = clip_start + clip.duration
+
+            elif trans_type == 'light_leak':
+                # Realistic light-leak: create animated warm overlay with soft moving mask
+                leak_dur = trans_dur
+                # Representative frames to determine suitability
+                frame_a = _get_frame_safe(prev, max(0, prev.duration - 0.05))
+                frame_b = _get_frame_safe(clip, 0.05)
+
+                try:
+                    w, h = clip.size
+                except Exception:
+                    w, h = video.size
+
+                suitable = _suitable_for_light_leak(frame_a, frame_b)
+                if not suitable:
+                    # Not ideal for decorative light leak; fallback to a short crossfade
+                    cf_dur = min(0.4, leak_dur / 2)
+                    clip_start = current_time - cf_dur
+                    if clip_start < 0:
+                        clip_start = 0
+                    clip_cf = clip.crossfadein(cf_dur)
+                    timeline_clips.append(clip_cf.set_start(clip_start))
+                    current_time = clip_start + clip.duration
+                else:
+                    # position so leak centers around the cut
+                    clip_start = current_time - leak_dur / 2
+                    if clip_start < 0:
+                        clip_start = 0
+                    clip_cf = clip.crossfadein(leak_dur / 4)
+                    timeline_clips.append(clip_cf.set_start(clip_start))
+
+                    # try loading user-supplied asset first
+                    asset_leak = _load_asset_light_leak(leak_dur, (w, h))
+                    if asset_leak is not None:
+                        print(f"Using custom light-leak asset for transition")
+                        # align asset center to cut point
+                        start_asset = current_time - asset_leak.duration/2
+                        overlays.append(asset_leak.set_start(start_asset))
+                    else:
+                        # fallback to generated warm, moving light leak overlay
+                        leak = _create_light_leak_clip((w, h), leak_dur, color=(255,180,100), max_alpha=0.75)
+                        leak = leak.set_start(max(0, clip_start))
+                        overlays.append(leak)
+                    current_time = clip_start + clip.duration
+
+            else:
+                # fallback to hard cut
+                clip_start = current_time
+                timeline_clips.append(clip.set_start(clip_start))
+                current_time = clip_start + clip.duration
+
+        # Create final composite clip
+        print(f"  Creating composite timeline with {len(timeline_clips)} clips and {len(overlays)} overlays")
+        all_clips = timeline_clips + overlays
+        final_comp = CompositeVideoClip(all_clips, size=video.size)
+
         print(f"  Writing stitched video to {output_file}...")
-        final_clip.write_videofile(output_file, codec='libx264', audio_codec='aac')
-        
+        final_comp.write_videofile(output_file, codec='libx264', audio_codec='aac')
+
         # Clean up
-        final_clip.close()
+        final_comp.close()
+        for c in raw_clips:
+            try:
+                c.close()
+            except Exception:
+                pass
         video.close()
-        
-        print(f"✓ Successfully stitched {len(clips)} segments")
+
+        print(f"✓ Successfully stitched {len(clips)} segments with transitions")
         return True
         
     except Exception as e:

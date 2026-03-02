@@ -11,6 +11,15 @@
 *.m4a
 *.mov
 
+# Allow committed light-leak assets placed in this folder
+!assets/light_leaks/
+!assets/light_leaks/*.mp4
+!assets/light_leaks/*.webm
+!assets/light_leaks/*.mov
+!assets/light_leaks/*.m4a
+!assets/light_leaks/*.png
+!assets/light_leaks/*.jpg
+
 # Output and audio directories
 output_videos/
 audio/
