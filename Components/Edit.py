@@ -193,12 +193,26 @@ def stitch_video_segments(input_file, segments, output_file):
             except Exception as e:
                 print(f"Warning: could not load light-leak asset {path}: {e}")
                 return None
-            # use entire asset duration; we will position it later when adding overlay
-            clip = clip.resize(newsize=size)
-            # convert to mask (brightness) for screen blending
-            mask = clip.to_mask()
-            clip = clip.set_mask(mask)
-            return clip
+            # Trim or loop asset to match the requested transition duration
+            try:
+                if clip.duration is None:
+                    # unknown duration - resize and return
+                    clip = clip.resize(newsize=size)
+                else:
+                    if clip.duration > duration:
+                        start = max(0, (clip.duration - duration) / 2)
+                        clip = clip.subclip(start, start + duration)
+                    elif clip.duration < duration:
+                        clip = clip.fx(vfx.loop, duration=duration)
+                    # finally resize to target
+                    clip = clip.resize(newsize=size)
+                # convert to mask (brightness) for screen-style blending
+                mask = clip.to_mask()
+                clip = clip.set_mask(mask)
+                return clip
+            except Exception as e:
+                print(f"Warning: error processing light-leak asset {path}: {e}")
+                return None
 
         def _suitable_for_light_leak(fa, fb):
             # Heuristic to prefer light leaks for warm/bright/festive scenes
