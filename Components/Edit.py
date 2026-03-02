@@ -182,12 +182,7 @@ def stitch_video_segments(input_file, segments, output_file):
             except Exception as e:
                 print(f"Warning: could not load light-leak asset {path}: {e}")
                 return None
-            # adjust duration
-            if clip.duration > duration:
-                start = max(0, (clip.duration - duration) / 2)
-                clip = clip.subclip(start, start + duration)
-            else:
-                clip = clip.fx(vfx.loop, duration=duration)
+            # use entire asset duration; we will position it later when adding overlay
             clip = clip.resize(newsize=size)
             # convert to mask (brightness) for screen blending
             mask = clip.to_mask()
@@ -316,8 +311,9 @@ def stitch_video_segments(input_file, segments, output_file):
                     asset_leak = _load_asset_light_leak(leak_dur, (w, h))
                     if asset_leak is not None:
                         print(f"Using custom light-leak asset for transition")
-                        asset_leak = asset_leak.set_start(max(0, clip_start))
-                        overlays.append(asset_leak)
+                        # align asset center to cut point
+                        start_asset = current_time - asset_leak.duration/2
+                        overlays.append(asset_leak.set_start(start_asset))
                     else:
                         # fallback to generated warm, moving light leak overlay
                         leak = _create_light_leak_clip((w, h), leak_dur, color=(255,180,100), max_alpha=0.75)
