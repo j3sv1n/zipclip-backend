@@ -115,16 +115,27 @@ def stitch_video_segments(input_file, segments, output_file):
                 frame_b = _get_frame_safe(clip_b, 0.1)
 
             diff = _frame_diff(frame_a, frame_b)
+            # debug log selection
+            #print(f"transition diff={diff:.3f}")
 
-            # Very similar frames -> cross-dissolve
-            if diff < 0.06:
+            # Very similar frames -> cross-dissolve (slightly more permissive)
+            if diff < 0.15:
                 return ('crossfade', min(1.0, clip_a.duration/3, clip_b.duration/3))
 
-            # Moderate similarity -> simple fade
-            if diff < 0.18:
+            # Increased range for simple fades
+            if diff < 0.30:
                 return ('fade', min(1.0, clip_a.duration/3, clip_b.duration/3))
 
-            # Very different -> occasional light leak to hide abrupt change
+            # Occasionally insert a fade even if diff is larger, to break up heavy light leaks
+            if diff < 0.50 and random.random() < 0.2:
+                return ('fade', min(1.0, clip_a.duration/4, clip_b.duration/4))
+
+            # Very rare humorous transitions (wipe/push)
+            if random.random() < 0.05:
+                choice = random.choice(['wipe','push'])
+                return (choice, min(1.0, clip_a.duration/3, clip_b.duration/3))
+
+            # Very different -> light leak
             return ('light_leak', min(0.8, clip_a.duration/4, clip_b.duration/4))
 
         # Create a realistic animated light-leak ColorClip with a soft moving mask
@@ -275,6 +286,30 @@ def stitch_video_segments(input_file, segments, output_file):
                 # ensure crossfadein applied to incoming clip
                 clip_cf = clip.crossfadein(trans_dur)
                 timeline_clips.append(clip_cf.set_start(clip_start))
+                current_time = clip_start + clip.duration
+
+            elif trans_type in ('wipe','push'):
+                # Rare stylized slide transitions
+                clip_start = current_time - trans_dur
+                if clip_start < 0:
+                    clip_start = 0
+                try:
+                    w, h = clip.size
+                except Exception:
+                    w, h = video.size
+                # direction: wipe = left-to-right slide in, push = right-to-left
+                if trans_type == 'wipe':
+                    start_x = w
+                    end_x = 0
+                else:
+                    start_x = -w
+                    end_x = 0
+                def position_func(t):
+                    tt = (t - clip_start) / trans_dur
+                    tt = max(0, min(1, tt))
+                    return (int(start_x + (end_x - start_x) * tt), 0)
+                moving = clip.set_start(clip_start).set_position(position_func)
+                timeline_clips.append(moving)
                 current_time = clip_start + clip.duration
 
             elif trans_type == 'light_leak':
