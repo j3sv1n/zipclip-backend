@@ -2,6 +2,8 @@ from moviepy.video.io.VideoFileClip import VideoFileClip
 from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip, ColorClip, vfx
 import subprocess
 import numpy as np
+import os
+import random
 import cv2
 
 def extractAudio(video_path, audio_path="audio.wav"):
@@ -163,6 +165,35 @@ def stitch_video_segments(input_file, segments, output_file):
             color_clip = color_clip.set_mask(mask_clip)
             return color_clip
 
+        # Attempt to load a user-supplied light-leak asset from assets/light_leaks
+        def _load_asset_light_leak(duration, size):
+            folder = os.path.join(os.getcwd(), "assets", "light_leaks")
+            if not os.path.isdir(folder):
+                return None
+            candidates = []
+            for fname in os.listdir(folder):
+                if fname.lower().endswith(('.mp4', '.mov', '.webm', '.mkv')):
+                    candidates.append(os.path.join(folder, fname))
+            if not candidates:
+                return None
+            path = random.choice(candidates)
+            try:
+                clip = VideoFileClip(path)
+            except Exception as e:
+                print(f"Warning: could not load light-leak asset {path}: {e}")
+                return None
+            # adjust duration
+            if clip.duration > duration:
+                start = max(0, (clip.duration - duration) / 2)
+                clip = clip.subclip(start, start + duration)
+            else:
+                clip = clip.fx(vfx.loop, duration=duration)
+            clip = clip.resize(newsize=size)
+            # convert to mask (brightness) for screen blending
+            mask = clip.to_mask()
+            clip = clip.set_mask(mask)
+            return clip
+
         def _suitable_for_light_leak(fa, fb):
             # Heuristic to prefer light leaks for warm/bright/festive scenes
             try:
@@ -281,10 +312,17 @@ def stitch_video_segments(input_file, segments, output_file):
                     clip_cf = clip.crossfadein(leak_dur / 4)
                     timeline_clips.append(clip_cf.set_start(clip_start))
 
-                    # create warm, moving light leak overlay
-                    leak = _create_light_leak_clip((w, h), leak_dur, color=(255,180,100), max_alpha=0.75)
-                    leak = leak.set_start(max(0, clip_start))
-                    overlays.append(leak)
+                    # try loading user-supplied asset first
+                    asset_leak = _load_asset_light_leak(leak_dur, (w, h))
+                    if asset_leak is not None:
+                        print(f"Using custom light-leak asset for transition")
+                        asset_leak = asset_leak.set_start(max(0, clip_start))
+                        overlays.append(asset_leak)
+                    else:
+                        # fallback to generated warm, moving light leak overlay
+                        leak = _create_light_leak_clip((w, h), leak_dur, color=(255,180,100), max_alpha=0.75)
+                        leak = leak.set_start(max(0, clip_start))
+                        overlays.append(leak)
                     current_time = clip_start + clip.duration
 
             else:
