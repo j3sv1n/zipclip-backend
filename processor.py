@@ -6,10 +6,13 @@ Wraps the main video processing logic for API usage without modifying core funct
 from Components.YoutubeDownloader import download_youtube_video
 from Components.Edit import extractAudio, crop_video, stitch_video_segments
 from Components.Transcription import transcribeAudio
-from Components.LanguageTasks import GetHighlight, GetHighlightMultiSegment, GetHighlightMultiSegmentFromFrames
-from Components.SceneDetection import detect_scenes, analyze_scenes_with_vision
 from Components.FaceCrop import crop_to_vertical, combine_videos
 from Components.Subtitles import add_subtitles_to_video
+from Components.LanguageTasks import GetHighlight, GetHighlightMultiSegment, GetHighlightMultiSegmentFromFrames, GetCoherentHighlights
+from Components.SceneDetection import detect_scenes, analyze_scenes_with_vision, analyze_frame_with_gpt
+import os
+import tempfile
+from PIL import Image
 import os
 import uuid
 import re
@@ -208,3 +211,166 @@ def process_video(
             "success": False,
             "error": str(e)
         }
+
+
+def process_multi_media(
+    file_paths: List[str],
+    add_subtitles: bool = True,
+    target_duration: int = 60,
+    progress_callback: Optional[Callable[[str, int], None]] = None,
+    session_id: Optional[str] = None
+) -> Dict[str, any]:
+    """
+    Process multiple media files (images/videos) to create a coherent short clip.
+    """
+    if session_id is None:
+        session_id = str(uuid.uuid4())[:8]
+    
+    def update_progress(message: str, percent: int):
+        if progress_callback:
+            progress_callback(message, percent)
+    
+    try:
+        output_dir = "output_videos"
+        audio_dir = "audio"
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(audio_dir, exist_ok=True)
+        
+        update_progress("Analyzing multiple media files...", 10)
+        
+        media_metadata = []
+        temp_clips = [] # Keep track of video clips generated from images
+        
+        for i, path in enumerate(file_paths):
+            update_progress(f"Processing file {i+1}/{len(file_paths)}: {os.path.basename(path)}", 10 + int(i * 30 / len(file_paths)))
+            
+            ext = os.path.splitext(path)[1].lower()
+            is_image = ext in ['.jpg', '.jpeg', '.png', '.webp']
+            
+            item = {
+                'index': i,
+                'filename': os.path.basename(path),
+                'path': path,
+                'type': 'image' if is_image else 'video'
+            }
+            
+            if is_image:
+                # Analyze image with Vision GPT
+                description = analyze_frame_with_gpt(path)
+                item['visual_description'] = description
+                item['duration'] = 5.0 # Fixed duration for images in context
+                item['transcript'] = ""
+            else:
+                # Video: Transcribe + Quick visual analysis
+                # Extract audio first
+                audio_file = os.path.join(audio_dir, f"audio_{session_id}_{i}.wav")
+                Audio = extractAudio(path, audio_file)
+                transcriptions = []
+                if Audio:
+                    transcriptions = transcribeAudio(Audio)
+                    if os.path.exists(audio_file): os.remove(audio_file)
+                
+                trans_text = " ".join([seg['text'] for seg in transcriptions])
+                item['transcript'] = trans_text
+                item['transcriptions_full'] = transcriptions # Store for subtitles later
+                
+                with VideoFileClip(path) as v:
+                    item['duration'] = v.duration
+                    # Analyze first and middle frames
+                    f1 = analyze_frame_with_gpt(path) # analyze_frame_with_gpt should handle video paths if we extract a frame
+                    # Actually analyze_frame_with_gpt takes a frame path. 
+                    # Let's extract a frame.
+                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                        v.save_frame(tmp.name, t=min(1.0, v.duration/2))
+                        v_desc = analyze_frame_with_gpt(tmp.name)
+                        os.unlink(tmp.name)
+                    item['visual_description'] = v_desc
+            
+            media_metadata.append(item)
+        
+        update_progress("Finding coherent connections between files...", 50)
+        selected_segments = GetCoherentHighlights(media_metadata, target_duration=target_duration)
+        
+        if not selected_segments:
+            return {"success": False, "error": "Failed to find coherent segments"}
+        
+        update_progress(f"Generating clips for {len(selected_segments)} segments...", 60)
+        
+        final_segments = []
+        all_transcriptions = []
+        current_offset = 0.0
+        
+        for i, seg in enumerate(selected_segments):
+            m_idx = seg['media_index']
+            media = media_metadata[m_idx]
+            
+            seg_path = media['path']
+            if media['type'] == 'image':
+                # Convert image to 5s video clip
+                img_clip_path = f"temp_img_{session_id}_{i}.mp4"
+                with VideoFileClip(media['path']) as img_vid: # Wait moviepy doesn't convert image to vid easily like this
+                    # Use ImageClip
+                    from moviepy.editor import ImageClip
+                    ic = ImageClip(media['path']).set_duration(5.0)
+                    ic.write_videofile(img_clip_path, fps=24, codec='libx264')
+                    temp_clips.append(img_clip_path)
+                    seg_path = img_clip_path
+                    seg['start'] = 0.0
+                    seg['end'] = 5.0
+            
+            seg['file_path'] = seg_path
+            final_segments.append(seg)
+            
+            # If it's a video segment, add its transcriptions with offset
+            if media['type'] == 'video' and 'transcriptions_full' in media:
+                for t_seg in media['transcriptions_full']:
+                    # Only add transcriptions that fall within the segment range
+                    if t_seg['start'] >= seg['start'] and t_seg['end'] <= seg['end']:
+                        all_transcriptions.append({
+                            'text': t_seg['text'],
+                            'start': t_seg['start'] - seg['start'] + current_offset,
+                            'end': t_seg['end'] - seg['start'] + current_offset
+                        })
+            current_offset += (seg['end'] - seg['start'])
+
+        temp_stitched = f"temp_stitched_{session_id}.mp4"
+        temp_cropped = f"temp_cropped_{session_id}.mp4"
+        temp_subtitled = f"temp_subtitled_{session_id}.mp4"
+        
+        update_progress("Stitching all segments together...", 80)
+        # Using None for input_file since segments have file_path
+        if not stitch_video_segments(None, final_segments, temp_stitched):
+            return {"success": False, "error": "Failed to stitch segments"}
+        
+        update_progress("Finalizing video format...", 90)
+        crop_to_vertical(temp_stitched, temp_cropped)
+        
+        final_output = os.path.join(output_dir, f"coherent_short_{session_id}.mp4")
+        
+        if add_subtitles and all_transcriptions:
+            update_progress("Adding subtitles...", 95)
+            add_subtitles_to_video(
+                temp_cropped,
+                temp_subtitled,
+                all_transcriptions,
+                subtitle_offset=0.0
+            )
+            combine_videos(temp_stitched, temp_subtitled, final_output)
+        else:
+            combine_videos(temp_stitched, temp_cropped, final_output)
+        
+        # Cleanup
+        for f in [temp_stitched, temp_cropped, temp_subtitled] + temp_clips:
+            if os.path.exists(f): os.remove(f)
+            
+        update_progress("Success!", 100)
+        return {
+            "success": True,
+            "output_file": final_output,
+            "video_title": f"Coherent Short {session_id}"
+        }
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"success": False, "error": str(e)}

@@ -52,20 +52,31 @@ def stitch_video_segments(input_file, segments, output_file):
         total_duration = 0
         
         for i, segment in enumerate(segments):
+            # Support per-segment file path for multi-media stitching
+            seg_file = segment.get('file_path', input_file)
+            if not seg_file or not os.path.exists(seg_file):
+                print(f"  Warning: File not found for segment {i+1}: {seg_file}")
+                continue
+
+            # Open clip from its specific file
+            temp_video = VideoFileClip(seg_file)
+            seg_max_time = temp_video.duration - 0.1
+            
             start = segment['start']
             end = segment['end']
             
             # Validate times
-            if end > max_time:
-                print(f"  Warning: Segment {i+1} end time ({end}s) exceeds video duration. Capping to {max_time}s")
-                end = max_time
+            if end > seg_max_time:
+                print(f"  Warning: Segment {i+1} end time ({end}s) exceeds video duration. Capping to {seg_max_time}s")
+                end = seg_max_time
             
             if start >= end:
                 print(f"  Warning: Skipping invalid segment {i+1} (start={start}s, end={end}s)")
+                temp_video.close()
                 continue
             
-            print(f"  Extracting segment {i+1}/{len(segments)}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
-            clip = video.subclip(start, end)
+            print(f"  Extracting segment {i+1}/{len(segments)} from {os.path.basename(seg_file)}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
+            clip = temp_video.subclip(start, end)
             clips.append(clip)
             total_duration += (end - start)
         
@@ -383,7 +394,10 @@ def stitch_video_segments(input_file, segments, output_file):
         # Create final composite clip
         print(f"  Creating composite timeline with {len(timeline_clips)} clips and {len(overlays)} overlays")
         all_clips = timeline_clips + overlays
-        final_comp = CompositeVideoClip(all_clips, size=video.size)
+        
+        # Use dimensions from first clip or original video if available
+        final_size = video.size if video else (timeline_clips[0].w, timeline_clips[0].h)
+        final_comp = CompositeVideoClip(all_clips, size=final_size)
 
         print(f"  Writing stitched video to {output_file}...")
         final_comp.write_videofile(output_file, codec='libx264', audio_codec='aac')
