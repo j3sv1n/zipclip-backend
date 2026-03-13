@@ -715,16 +715,60 @@ Return a JSON object with the following structure:
             except Exception as e:
                 print(f"  Warning: Skipping invalid segment {i}: {e}")
         
-        print(f"\nTotal duration: {response.total_duration:.2f}s")
+        print(f"Total duration: {response.total_duration:.2f}s")
         print(f"{'='*60}\n")
         
-        return segments
+        return {
+            "theme": response.theme,
+            "segments": segments
+        }
         
     except Exception as e:
         print(f"ERROR IN GetCoherentHighlights: {e}")
         import traceback
         traceback.print_exc()
         return None
+
+
+def GetMusicMood(theme, media_metadata_list):
+    """
+    Suggest a music genre and mood based on the theme and media content.
+    """
+    from langchain_openai import ChatOpenAI
+    
+    media_info = ""
+    for item in media_metadata_list[:3]: # Just a sample
+        media_info += f"- {item['type']}: {item['visual_description'][:100]}\n"
+        
+    mood_system = """
+You are a video producer. Based on the theme of a video and descriptions of its content, 
+suggest a background music genre and mood.
+Return a simple string like "Upbeat, energetic electronic" or "Calm, reflective piano".
+
+Theme: {theme}
+Media Sample:
+{media_info}
+"""
+    
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            api_key=api_key
+        )
+        
+        from langchain.prompts import ChatPromptTemplate
+        prompt = ChatPromptTemplate.from_messages([("system", mood_system)])
+        chain = prompt | llm
+        
+        print(f"Calling LLM for music mood selection...")
+        response = chain.invoke({"theme": theme, "media_info": media_info})
+        mood = response.content if hasattr(response, 'content') else str(response)
+        
+        return mood.strip()
+    except Exception as e:
+        print(f"Error in GetMusicMood: {e}")
+        return "Inspiring, corporate background"
 
 
 if __name__ == "__main__":

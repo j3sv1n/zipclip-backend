@@ -3,20 +3,21 @@ Video Processor Wrapper
 Wraps the main video processing logic for API usage without modifying core functionality.
 """
 
+from moviepy.editor import VideoFileClip, ImageClip
 from Components.YoutubeDownloader import download_youtube_video
-from Components.Edit import extractAudio, crop_video, stitch_video_segments
+from Components.Edit import extractAudio, crop_video, stitch_video_segments, apply_background_music
 from Components.Transcription import transcribeAudio
+from Components.LanguageTasks import GetHighlight, GetHighlightMultiSegment, GetHighlightMultiSegmentFromFrames, GetCoherentHighlights, GetMusicMood
+from Components.SceneDetection import detect_scenes, analyze_scenes_with_vision, analyze_frame_with_gpt
 from Components.FaceCrop import crop_to_vertical, combine_videos
 from Components.Subtitles import add_subtitles_to_video
-from Components.LanguageTasks import GetHighlight, GetHighlightMultiSegment, GetHighlightMultiSegmentFromFrames, GetCoherentHighlights
-from Components.SceneDetection import detect_scenes, analyze_scenes_with_vision, analyze_frame_with_gpt
+from Components.Music import select_and_download_music
 import os
 import tempfile
-from PIL import Image
-import os
 import uuid
 import re
 from typing import Callable, Optional, Dict, List, Tuple
+from PIL import Image
 
 
 def clean_filename(title: str) -> str:
@@ -289,10 +290,13 @@ def process_multi_media(
             media_metadata.append(item)
         
         update_progress("Finding coherent connections between files...", 50)
-        selected_segments = GetCoherentHighlights(media_metadata, target_duration=target_duration)
+        highlights_result = GetCoherentHighlights(media_metadata, target_duration=target_duration)
         
-        if not selected_segments:
+        if not highlights_result or 'segments' not in highlights_result:
             return {"success": False, "error": "Failed to find coherent segments"}
+            
+        selected_segments = highlights_result['segments']
+        theme = highlights_result.get('theme', 'A coherent and engaging short video')
         
         update_progress(f"Generating clips for {len(selected_segments)} segments...", 60)
         
@@ -308,15 +312,13 @@ def process_multi_media(
             if media['type'] == 'image':
                 # Convert image to 5s video clip
                 img_clip_path = f"temp_img_{session_id}_{i}.mp4"
-                with VideoFileClip(media['path']) as img_vid: # Wait moviepy doesn't convert image to vid easily like this
-                    # Use ImageClip
-                    from moviepy.editor import ImageClip
-                    ic = ImageClip(media['path']).set_duration(5.0)
-                    ic.write_videofile(img_clip_path, fps=24, codec='libx264')
-                    temp_clips.append(img_clip_path)
-                    seg_path = img_clip_path
-                    seg['start'] = 0.0
-                    seg['end'] = 5.0
+                from moviepy.editor import ImageClip
+                ic = ImageClip(media['path']).set_duration(5.0)
+                ic.write_videofile(img_clip_path, fps=24, codec='libx264')
+                temp_clips.append(img_clip_path)
+                seg_path = img_clip_path
+                seg['start'] = 0.0
+                seg['end'] = 5.0
             
             seg['file_path'] = seg_path
             final_segments.append(seg)
@@ -336,32 +338,52 @@ def process_multi_media(
         temp_stitched = f"temp_stitched_{session_id}.mp4"
         temp_cropped = f"temp_cropped_{session_id}.mp4"
         temp_subtitled = f"temp_subtitled_{session_id}.mp4"
+        temp_with_music = f"temp_music_{session_id}.mp4"
         
         update_progress("Stitching all segments together...", 80)
         # Using None for input_file since segments have file_path
         if not stitch_video_segments(None, final_segments, temp_stitched):
             return {"success": False, "error": "Failed to stitch segments"}
         
-        update_progress("Finalizing video format...", 90)
+        update_progress("Finalizing video format...", 85)
         crop_to_vertical(temp_stitched, temp_cropped)
         
-        final_output = os.path.join(output_dir, f"coherent_short_{session_id}.mp4")
+        update_progress("Selecting background music...", 90)
+        mood = GetMusicMood(theme, media_metadata)
+        music_file = select_and_download_music(mood)
         
+        if music_file:
+            update_progress("Applying background music with ducking...", 92)
+            if apply_background_music(temp_cropped, music_file, all_transcriptions, temp_with_music):
+                ready_video = temp_with_music
+            else:
+                ready_video = temp_cropped
+        else:
+            ready_video = temp_cropped
+            
         if add_subtitles and all_transcriptions:
-            update_progress("Adding subtitles...", 95)
+            update_progress("Adding subtitles...", 97)
+            # add_subtitles_to_video will re-encode, so it becomes the final output
+            # We use ready_video as input because it has the mixed audio
             add_subtitles_to_video(
-                temp_cropped,
+                ready_video,
                 temp_subtitled,
                 all_transcriptions,
                 subtitle_offset=0.0
             )
-            combine_videos(temp_stitched, temp_subtitled, final_output)
+            # Copy subtitled version to final output
+            import shutil
+            shutil.copy2(temp_subtitled, final_output)
         else:
-            combine_videos(temp_stitched, temp_cropped, final_output)
+            # Copy ready_video (which has music + crop) to final output
+            import shutil
+            shutil.copy2(ready_video, final_output)
         
         # Cleanup
-        for f in [temp_stitched, temp_cropped, temp_subtitled] + temp_clips:
-            if os.path.exists(f): os.remove(f)
+        for f in [temp_stitched, temp_cropped, temp_subtitled, temp_with_music] + temp_clips:
+            if os.path.exists(f): 
+                try: os.remove(f)
+                except: pass
             
         update_progress("Success!", 100)
         return {
