@@ -14,7 +14,7 @@ An AI-powered tool for generating engaging YouTube Shorts from longer videos. Ut
 - Command-line interface with automation options
 - Concurrent processing with unique session IDs
 - Clean output with slugified filenames
-- REST API mode for integrations
+- REST API mode for integrations.
 
 ### Advanced Features
 - Scene detection for visual boundaries
