@@ -15,7 +15,7 @@ import uuid
 import threading
 import time
 from datetime import datetime
-from processor import process_video
+from processor import process_video, process_multi_media
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -111,7 +111,7 @@ class JobListItem(BaseModel):
 
 
 # Background job processor
-def process_job(job_id: str, video_path: str, mode: str, add_subtitles: bool, target_duration: int):
+def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, target_duration: int):
     """Background task to process video."""
     
     def update_progress(message: str, percent: int):
@@ -128,14 +128,25 @@ def process_job(job_id: str, video_path: str, mode: str, add_subtitles: bool, ta
             jobs[job_id]["message"] = "Starting processing..."
         
         # Process the video
-        result = process_video(
-            video_url_or_path=video_path,
-            mode=mode,
-            add_subtitles=add_subtitles,
-            target_duration=target_duration,
-            progress_callback=update_progress,
-            session_id=job_id
-        )
+        if isinstance(input_source, list):
+            # Multiple local files
+            result = process_multi_media(
+                file_paths=input_source,
+                add_subtitles=add_subtitles,
+                target_duration=target_duration,
+                progress_callback=update_progress,
+                session_id=job_id
+            )
+        else:
+            # Single URL or local file
+            result = process_video(
+                video_url_or_path=input_source,
+                mode=mode,
+                add_subtitles=add_subtitles,
+                target_duration=target_duration,
+                progress_callback=update_progress,
+                session_id=job_id
+            )
         
         with jobs_lock:
             if result["success"]:
@@ -211,7 +222,7 @@ async def health_check():
 async def create_processing_job(
     background_tasks: BackgroundTasks,
     request: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
+    files: Optional[List[UploadFile]] = File(None),
     mode: str = "continuous",
     add_subtitles: bool = True,
     target_duration: int = 120,
@@ -254,35 +265,42 @@ async def create_processing_job(
         raise HTTPException(status_code=429, detail="Maximum concurrent jobs reached. Please try again later.")
     
     # Determine input source and extract options
-    video_path = None
+    input_source = None
     processing_mode = mode
     process_subtitles = add_subtitles
     process_duration = target_duration
+    job_id = str(uuid.uuid4())[:8]
     
-    if file:
-        # Handle file upload
-        if file.size and file.size > UPLOAD_MAX_SIZE:
-            raise HTTPException(status_code=413, detail=f"File too large. Maximum size: {UPLOAD_MAX_SIZE} bytes")
-        
-        # Save uploaded file
-        job_id = str(uuid.uuid4())[:8]
-        file_extension = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
-        video_path = os.path.join(UPLOAD_DIR, f"{job_id}{file_extension}")
-        
-        with open(video_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
+    if files:
+        # Handle file upload (one or many)
+        input_source = []
+        for i, file in enumerate(files):
+            if file.size and file.size > UPLOAD_MAX_SIZE:
+                raise HTTPException(status_code=413, detail=f"File {file.filename} too large.")
+            
+            file_extension = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
+            video_path = os.path.join(UPLOAD_DIR, f"{job_id}_{i}{file_extension}")
+            
+            with open(video_path, "wb") as f:
+                content = await file.read()
+                f.write(content)
+            input_source.append(video_path)
+            
+        # If only one file, we might still treat it as single-video if user wants, 
+        # but the request structure now supports list.
+        # If multiple files, we force 'coherent' processing if needed, but processor handles it.
+        if len(input_source) == 1:
+            input_source = input_source[0]
     
     elif parsed_request and parsed_request.video_url:
         # Handle URL
-        job_id = str(uuid.uuid4())[:8]
-        video_path = parsed_request.video_url
+        input_source = parsed_request.video_url
         processing_mode = parsed_request.mode
         process_subtitles = parsed_request.add_subtitles
         process_duration = parsed_request.target_duration
     
     else:
-        raise HTTPException(status_code=400, detail="Either video_url or file must be provided")
+        raise HTTPException(status_code=400, detail="Either video_url or files must be provided")
     
     # Create job entry with additional info
     with jobs_lock:
@@ -306,7 +324,7 @@ async def create_processing_job(
     background_tasks.add_task(
         process_job,
         job_id=job_id,
-        video_path=video_path,
+        input_source=input_source,
         mode=processing_mode,
         add_subtitles=process_subtitles,
         target_duration=process_duration

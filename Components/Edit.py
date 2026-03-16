@@ -1,5 +1,4 @@
-from moviepy.video.io.VideoFileClip import VideoFileClip
-from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip, ColorClip, vfx
+from moviepy.editor import VideoFileClip, concatenate_videoclips, CompositeVideoClip, ColorClip, vfx, AudioFileClip, CompositeAudioClip
 import subprocess
 import numpy as np
 import os
@@ -44,34 +43,63 @@ def stitch_video_segments(input_file, segments, output_file):
     """
     try:
         print(f"\nStitching {len(segments)} video segments...")
-        video = VideoFileClip(input_file)
-        max_time = video.duration - 0.1
+        video = None
+        if input_file:
+            video = VideoFileClip(input_file)
+        
+        # Cache for video file handles to prevent redundant opens
+        video_cache = {}
+        if input_file:
+            video_cache[input_file] = video
+
+        def get_video_from_cache(path):
+            if path not in video_cache:
+                print(f"  Opening new file handle for: {os.path.basename(path)}")
+                video_cache[path] = VideoFileClip(path)
+            return video_cache[path]
         
         # Extract each segment as a subclip
         clips = []
         total_duration = 0
         
         for i, segment in enumerate(segments):
+            # Support per-segment file path for multi-media stitching
+            seg_file = segment.get('file_path', input_file)
+            if not seg_file or not os.path.exists(seg_file):
+                print(f"  Warning: File not found for segment {i+1}: {seg_file}")
+                continue
+
+            # Use cached video handle
+            try:
+                temp_video = get_video_from_cache(seg_file)
+            except Exception as e:
+                print(f"  Error opening {seg_file}: {e}")
+                continue
+
+            seg_max_time = temp_video.duration - 0.1
+            
             start = segment['start']
             end = segment['end']
             
             # Validate times
-            if end > max_time:
-                print(f"  Warning: Segment {i+1} end time ({end}s) exceeds video duration. Capping to {max_time}s")
-                end = max_time
+            if end > seg_max_time:
+                print(f"  Warning: Segment {i+1} end time ({end}s) exceeds video duration. Capping to {seg_max_time}s")
+                end = seg_max_time
             
             if start >= end:
                 print(f"  Warning: Skipping invalid segment {i+1} (start={start}s, end={end}s)")
                 continue
             
-            print(f"  Extracting segment {i+1}/{len(segments)}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
-            clip = video.subclip(start, end)
+            print(f"  Extracting segment {i+1}/{len(segments)} from {os.path.basename(seg_file)}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
+            clip = temp_video.subclip(start, end)
             clips.append(clip)
             total_duration += (end - start)
         
         if not clips:
             print("Error: No valid clips to stitch")
-            video.close()
+            # Cleanup cache before returning
+            for v in video_cache.values():
+                v.close()
             return False
         
         print(f"  Total duration of stitched video: {total_duration:.2f}s")
@@ -248,21 +276,8 @@ def stitch_video_segments(input_file, segments, output_file):
             except Exception:
                 return True
 
-        # Expand clips slightly to accommodate transitions where possible
-        expanded_clips = []
-        clip_meta = []
-
-        for i, segment in enumerate(segments):
-            start = max(0, segment['start'])
-            end = min(max_time, segment['end'])
-            # We will expand by up to 1s on either side if possible; exact overlap depends on neighbors
-            expanded_clips.append({'start': start, 'end': end})
-
-        # Pre-extract raw clips (we'll adjust starts when building timeline)
-        raw_clips = []
-        for seg in expanded_clips:
-            clip = video.subclip(seg['start'], seg['end']).fx(vfx.freeze, t=0) if False else video.subclip(seg['start'], seg['end'])
-            raw_clips.append(clip)
+        # Use the 'clips' collected in the first loop
+        raw_clips = clips
 
         # Build timeline with start times and overlays
         timeline_clips = []
@@ -314,7 +329,8 @@ def stitch_video_segments(input_file, segments, output_file):
                 try:
                     w, h = clip.size
                 except Exception:
-                    w, h = video.size
+                    # Fallback to a common high-res vertical or landscape if unknown
+                    w, h = (1080, 1920) if (clip.h > clip.w) else (1920, 1080)
                 # direction: wipe = left-to-right slide in, push = right-to-left
                 if trans_type == 'wipe':
                     start_x = w
@@ -340,7 +356,7 @@ def stitch_video_segments(input_file, segments, output_file):
                 try:
                     w, h = clip.size
                 except Exception:
-                    w, h = video.size
+                    w, h = (1080, 1920) if (clip.h > clip.w) else (1920, 1080)
 
                 suitable = _suitable_for_light_leak(frame_a, frame_b)
                 if not suitable:
@@ -383,19 +399,28 @@ def stitch_video_segments(input_file, segments, output_file):
         # Create final composite clip
         print(f"  Creating composite timeline with {len(timeline_clips)} clips and {len(overlays)} overlays")
         all_clips = timeline_clips + overlays
-        final_comp = CompositeVideoClip(all_clips, size=video.size)
+        
+        # Use dimensions from first clip or original video if available
+        final_size = video.size if (video and hasattr(video, 'size')) else (timeline_clips[0].w, timeline_clips[0].h)
+        final_comp = CompositeVideoClip(all_clips, size=final_size)
 
         print(f"  Writing stitched video to {output_file}...")
         final_comp.write_videofile(output_file, codec='libx264', audio_codec='aac')
 
         # Clean up
         final_comp.close()
+        for v in video_cache.values():
+            try:
+                v.close()
+            except Exception:
+                pass
+        
+        # Additional cleanup for any raw clips not in cache (if any)
         for c in raw_clips:
             try:
                 c.close()
             except Exception:
                 pass
-        video.close()
 
         print(f"✓ Successfully stitched {len(clips)} segments with transitions")
         return True
@@ -406,13 +431,50 @@ def stitch_video_segments(input_file, segments, output_file):
         traceback.print_exc()
         return False
 
-# Example usage:
-if __name__ == "__main__":
-    input_file = r"Example.mp4" ## Test
-    print(input_file)
-    output_file = "Short.mp4"
-    start_time = 31.92 
-    end_time = 49.2   
-
-    crop_video(input_file, output_file, start_time, end_time)
+def apply_background_music(video_path, music_path, transcriptions, output_path, music_volume=0.3, voice_volume=1.0, ducking_volume=0.08):
+    """
+    Apply background music to a video with smart ducking during dialogue.
+    """
+    try:
+        print(f"Applying background music from {music_path} to {video_path}")
+        from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
+        
+        video = VideoFileClip(video_path)
+        music = AudioFileClip(music_path)
+        
+        # Loop music if shorter than video
+        if music.duration < video.duration:
+            import math
+            n_loops = math.ceil(video.duration / music.duration)
+            from moviepy.audio.AudioClip import concatenate_audioclips
+            music = concatenate_audioclips([music] * n_loops)
+        
+        music = music.subclip(0, video.duration)
+        
+        # Create a volume profile for the music
+        def make_ducking_filter(t):
+            for seg in transcriptions:
+                if seg['start'] - 0.3 <= t <= seg['end'] + 0.3:
+                    return ducking_volume
+            return 1.0
+        
+        ducked_music = music.fl_audio(lambda get_frame, t: make_ducking_filter(t) * get_frame(t))
+        ducked_music = ducked_music.volumex(music_volume)
+        
+        if video.audio:
+            original_audio = video.audio.volumex(voice_volume)
+            final_audio = CompositeAudioClip([original_audio, ducked_music])
+        else:
+            final_audio = ducked_music
+            
+        final_video = video.set_audio(final_audio)
+        final_video.write_videofile(output_path, codec='libx264', audio_codec='aac', temp_audiofile='temp-audio.m4a', remove_temp=True)
+        
+        video.close()
+        music.close()
+        print(f"✓ Successfully applied background music to {output_path}")
+        return True
+    except Exception as e:
+        print(f"Error applying background music: {e}")
+        return False
 

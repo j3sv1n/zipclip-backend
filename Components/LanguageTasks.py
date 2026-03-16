@@ -41,6 +41,25 @@ class MultiSegmentResponse(BaseModel):
     segments: list[SegmentResponse] = Field(description="List of segments to extract and stitch together")
     total_duration: float = Field(description="Total duration of all segments combined in seconds")
 
+
+class CoherentSegmentResponse(BaseModel):
+    """
+    A single segment from a specific media file.
+    """
+    media_index: int = Field(description="Index of the media file in the provided list (0-based)")
+    start: float = Field(description="Start time of the segment in seconds")
+    end: float = Field(description="End time of the segment in seconds")
+    content: str = Field(description="Brief description of what makes this segment interesting")
+
+
+class CoherentMultiSegmentResponse(BaseModel):
+    """
+    Response containing multiple segments from different media files that together form a coherent short.
+    """
+    theme: str = Field(description="The identified common theme or story connecting the media files")
+    segments: list[CoherentSegmentResponse] = Field(description="List of segments from different media to stitch together")
+    total_duration: float = Field(description="Total duration of all segments combined in seconds")
+
 system = """
 The input contains a timestamped transcription of a video.
 Select a 2-minute segment from the transcription that contains something interesting, useful, surprising, controversial, or thought-provoking.
@@ -582,6 +601,174 @@ Return a JSON object with the following structure:
         import traceback
         traceback.print_exc()
         return None
+
+
+def GetCoherentHighlights(media_metadata_list, target_duration=120):
+    """
+    Identify connections between multiple media files and select segments 
+    that together form a coherent short video.
+    
+    Args:
+        media_metadata_list: List of dicts with:
+                            'index': int,
+                            'type': 'video' or 'image',
+                            'filename': str,
+                            'duration': float,
+                            'transcript': str (for videos),
+                            'visual_description': str
+        target_duration: Target total duration in seconds
+    
+    Returns:
+        List of segment dicts with 'media_index', 'start', 'end', or None if error
+    """
+    from langchain_openai import ChatOpenAI
+    
+    media_summary = "INPUT MEDIA FILES:\n"
+    media_summary += "=" * 80 + "\n\n"
+    
+    for item in media_metadata_list:
+        media_summary += (
+            f"Media {item['index']} ({item['type']}): {item['filename']}\n"
+            f"Duration: {item['duration']:.2f}s\n"
+        )
+        if item['type'] == 'video' and item.get('transcript'):
+            media_summary += f"Transcript: {item['transcript'][:500]}...\n"
+        media_summary += f"Visual Context: {item['visual_description']}\n"
+        media_summary += "-" * 80 + "\n\n"
+    
+    coherent_system = f"""
+You are a creative video editor. You have been given a collection of media files (videos and images).
+Your task is to:
+1. Identify a common theme, story, or "vibe" that connects these files together.
+2. Select 3-10 segments from across these different media files to create a coherent and engaging short video.
+3. For images, you can assume they will be shown for 3-5 seconds (they have a fixed duration in the input).
+4. For videos, select punchy segments (5-15s typically).
+5. The final result should feel like a single, well-paced story.
+
+DURATION REQUIREMENTS:
+- TARGET total duration: {target_duration} seconds.
+- Each segment should be meaningful and follow the identified theme.
+
+Return a JSON object with the following structure:
+{{{{
+    "theme": "Description of the identified theme",
+    "segments": [
+        {{{{
+            "media_index": <index of the media file (number)>,
+            "start": <start time in seconds (number)>,
+            "end": <end time in seconds (number)>,
+            "content": "Why this segment fits the theme"
+        }}}},
+        ...
+    ],
+    "total_duration": <sum of all segment durations in seconds (number)>
+}}}}
+
+## Media Information
+{media_summary}
+"""
+    
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=1.0,
+            api_key=api_key
+        )
+
+        from langchain.prompts import ChatPromptTemplate
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", coherent_system),
+                ("user", f"Find the best connection between these {len(media_metadata_list)} files and create a {target_duration}s coherent short.")
+            ]
+        )
+        chain = prompt | llm.with_structured_output(CoherentMultiSegmentResponse, method="function_calling")
+        
+        print(f"Calling LLM for coherent multi-media selection...")
+        response = chain.invoke({})
+        
+        # Validate response
+        if not response:
+            print("ERROR: LLM returned empty response")
+            return None
+        
+        if not hasattr(response, 'segments') or not response.segments:
+            print(f"ERROR: No segments returned")
+            return None
+        
+        segments = []
+        print(f"\n{'='*60}")
+        print(f"IDENTIFIED THEME: {response.theme}")
+        print(f"SELECTED {len(response.segments)} SEGMENTS:")
+        print(f"{'='*60}")
+        
+        for i, segment in enumerate(response.segments, 1):
+            try:
+                segments.append({
+                    'media_index': int(segment.media_index),
+                    'start': float(segment.start),
+                    'end': float(segment.end),
+                    'content': segment.content
+                })
+                print(f"  Segment {i}: Media {segment.media_index} | {segment.start:.2f}s - {segment.end:.2f}s")
+                print(f"    Reason: {segment.content}")
+            except Exception as e:
+                print(f"  Warning: Skipping invalid segment {i}: {e}")
+        
+        print(f"Total duration: {response.total_duration:.2f}s")
+        print(f"{'='*60}\n")
+        
+        return {
+            "theme": response.theme,
+            "segments": segments
+        }
+        
+    except Exception as e:
+        print(f"ERROR IN GetCoherentHighlights: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
+def GetMusicMood(theme, media_metadata_list):
+    """
+    Suggest a music genre and mood based on the theme and media content.
+    """
+    from langchain_openai import ChatOpenAI
+    
+    media_info = ""
+    for item in media_metadata_list[:3]: # Just a sample
+        media_info += f"- {item['type']}: {item['visual_description'][:100]}\n"
+        
+    mood_system = """
+You are a video producer. Based on the theme of a video and descriptions of its content, 
+suggest a background music genre and mood.
+Return a simple string like "Upbeat, energetic electronic" or "Calm, reflective piano".
+
+Theme: {theme}
+Media Sample:
+{media_info}
+"""
+    
+    try:
+        llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            api_key=api_key
+        )
+        
+        from langchain.prompts import ChatPromptTemplate
+        prompt = ChatPromptTemplate.from_messages([("system", mood_system)])
+        chain = prompt | llm
+        
+        print(f"Calling LLM for music mood selection...")
+        response = chain.invoke({"theme": theme, "media_info": media_info})
+        mood = response.content if hasattr(response, 'content') else str(response)
+        
+        return mood.strip()
+    except Exception as e:
+        print(f"Error in GetMusicMood: {e}")
+        return "Inspiring, corporate background"
 
 
 if __name__ == "__main__":

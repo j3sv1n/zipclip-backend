@@ -1,5 +1,5 @@
-# Use NVIDIA CUDA base image for GPU support
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
+# Use a standard Python image for CPU-only deployment
+FROM python:3.10-slim
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -8,17 +8,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-venv \
-    python3-pip \
     ffmpeg \
+    imagemagick \
     libavdevice-dev \
     libavfilter-dev \
     libopus-dev \
     libvpx-dev \
     pkg-config \
     libsrtp2-dev \
-    imagemagick \
     git \
     wget \
     && rm -rf /var/lib/apt/lists/*
@@ -33,19 +30,18 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
+# Note: Since this is CPU-only, we might want to install torch-cpu version to save space
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
-# Create output directory
-RUN mkdir -p /app/output
+# Create output and upload directories
+RUN mkdir -p /app/output_videos /app/uploads
 
-# Set environment variable for CUDA library path
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.10/dist-packages/nvidia/cudnn/lib:/usr/local/lib/python3.10/dist-packages/nvidia/cublas/lib:$LD_LIBRARY_PATH
+# Expose the API port
+EXPOSE 7860
 
-# Make run.sh executable
-RUN chmod +x run.sh
-
-# Default command (can be overridden)
-CMD ["./run.sh"]
+# Default command to run the API server
+# Hugging Face Spaces expects the app to run on port 7860 by default
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "7860"]
