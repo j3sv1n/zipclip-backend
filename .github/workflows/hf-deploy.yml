@@ -1,0 +1,36 @@
+name: Deploy Backend to Hugging Face Spaces
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - 'Dockerfile.cpu'
+      - 'Components/**'
+      - '.github/workflows/hf-deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HF Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_USERNAME: ${{ github.repository_owner }}
+          HF_SPACE_NAME: zipclip-backend
+        run: |
+          git remote add hf https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME
+          git config user.name "GitHub Action"
+          git config user.email "actions@github.com"
+          
+          # Force push to the main branch of the Space
+          # We use -f because the Space repo might have a different history
+          git push hf main:main -f
