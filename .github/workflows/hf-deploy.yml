@@ -29,10 +29,18 @@ jobs:
           HF_USERNAME: ${{ github.repository_owner }}
           HF_SPACE_NAME: zipclip-backend
         run: |
+          # Clean up existing git metadata to wipe bulky history
+          rm -rf .git
+          
+          # Re-initialize as a tiny repo
+          git init
           git remote add hf https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME
           git config user.name "GitHub Action"
           git config user.email "actions@github.com"
           
-          # Force push to the main branch of the Space
-          # We use -f because the Space repo might have a different history
-          git push hf main:main -f
+          # Add only current files (obeying .gitignore)
+          git add .
+          git commit -m "deploy: update backend code"
+          
+          # Force push the single clean commit to the 'main' branch of the Space
+          git push hf master:main -f
