@@ -34,13 +34,22 @@ jobs:
           
           # Re-initialize as a tiny repo
           git init
+          
+          # Setup LFS for Hugging Face
+          git lfs install
+          git lfs track "*.mp4"
+          git lfs track "*.mp3"
+          git lfs track "*.caffemodel"
+          git lfs track "*.prototxt"
+          
           git remote add hf https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME
           git config user.name "GitHub Action"
           git config user.email "actions@github.com"
           
-          # Add only current files (obeying .gitignore)
+          # Add current files (obeying .gitignore)
           git add .
-          git commit -m "deploy: update backend code"
+          git add .gitattributes
+          git commit -m "deploy: update backend code with LFS assets"
           
-          # Force push the single clean commit to the 'main' branch of the Space
+          # Force push to the 'main' branch of the Space
           git push hf master:main -f

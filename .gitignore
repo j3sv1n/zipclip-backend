@@ -2,7 +2,7 @@
 *.pyc
 **/__pycache__/
 
-# Media Files
+# Media Files (Global Ignore)
 *.wav
 *.mp3
 *.gif
@@ -10,10 +10,13 @@
 *.webm
 *.m4a
 *.mov
+*.caffemodel
 
-# Allow committed assets placed in this folder (lights, music, etc)
+# Explicitly allow ONLY essential assets for deployment
 !Components/assets/
 !Components/assets/**
+!models/
+!models/**
 
 # Output and audio directories
 output_videos/
