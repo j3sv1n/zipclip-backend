@@ -31,9 +31,10 @@ WORKDIR /app
 # Copy requirements first for better Docker layer caching
 COPY requirements.txt .
 
-# Install Python dependencies
-# Note: Since this is CPU-only, we might want to install torch-cpu version to save space
-RUN pip3 install --no-cache-dir -r requirements.txt
+# Install Python dependencies (CPU-only, no CUDA)
+RUN pip3 install --no-cache-dir \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    -r requirements.txt
 
 # Copy application code
 COPY . .
