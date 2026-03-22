@@ -310,15 +310,13 @@ def process_multi_media(
             
             seg_path = media['path']
             if media['type'] == 'image':
-                # Convert image to 5s video clip
-                img_clip_path = f"temp_img_{session_id}_{i}.mp4"
+                # Bypass intermediate file writing for images, use direct clip
                 from moviepy.editor import ImageClip
                 ic = ImageClip(media['path']).set_duration(5.0)
-                ic.write_videofile(img_clip_path, fps=24, codec='libx264')
-                temp_clips.append(img_clip_path)
-                seg_path = img_clip_path
+                seg['clip'] = ic
                 seg['start'] = 0.0
                 seg['end'] = 5.0
+                seg_path = media['path']
             
             seg['file_path'] = seg_path
             final_segments.append(seg)

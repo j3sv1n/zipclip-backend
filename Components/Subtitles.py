@@ -261,7 +261,9 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
             audio_codec='aac',
             fps=video.fps,
             preset='ultrafast',
-            threads=4
+            threads=4,
+            temp_audiofile=f"temp_audio_{os.path.basename(output_video)}.m4a",
+            remove_temp=True
         )
         final_video.close()
     

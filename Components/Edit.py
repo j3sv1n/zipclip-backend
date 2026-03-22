@@ -63,17 +63,22 @@ def stitch_video_segments(input_file, segments, output_file):
         total_duration = 0
         
         for i, segment in enumerate(segments):
-            # Support per-segment file path for multi-media stitching
+            # Support direct clip object OR per-segment file path
+            clip_obj = segment.get('clip')
             seg_file = segment.get('file_path', input_file)
-            if not seg_file or not os.path.exists(seg_file):
-                print(f"  Warning: File not found for segment {i+1}: {seg_file}")
-                continue
-
-            # Use cached video handle
-            try:
-                temp_video = get_video_from_cache(seg_file)
-            except Exception as e:
-                print(f"  Error opening {seg_file}: {e}")
+            
+            if clip_obj:
+                print(f"  Using direct clip object for segment {i+1}")
+                temp_video = clip_obj
+            elif seg_file and os.path.exists(seg_file):
+                # Use cached video handle
+                try:
+                    temp_video = get_video_from_cache(seg_file)
+                except Exception as e:
+                    print(f"  Error opening {seg_file}: {e}")
+                    continue
+            else:
+                print(f"  Warning: No source found for segment {i+1}")
                 continue
 
             seg_max_time = temp_video.duration - 0.1
@@ -401,11 +406,28 @@ def stitch_video_segments(input_file, segments, output_file):
         all_clips = timeline_clips + overlays
         
         # Use dimensions from first clip or original video if available
-        final_size = video.size if (video and hasattr(video, 'size')) else (timeline_clips[0].w, timeline_clips[0].h)
+        w, h = video.size if (video and hasattr(video, 'size')) else (timeline_clips[0].w, timeline_clips[0].h)
+        
+        # libx264 requires even dimensions
+        if w % 2 != 0: w -= 1
+        if h % 2 != 0: h -= 1
+        final_size = (w, h)
+        
         final_comp = CompositeVideoClip(all_clips, size=final_size)
+        
+        # Get FPS from source if available
+        source_fps = video.fps if (video and hasattr(video, 'fps')) else 24
+        if not source_fps: source_fps = 24
 
-        print(f"  Writing stitched video to {output_file}...")
-        final_comp.write_videofile(output_file, codec='libx264', audio_codec='aac')
+        print(f"  Writing stitched video ({w}x{h}) at {source_fps} FPS to {output_file}...")
+        final_comp.write_videofile(
+            output_file, 
+            codec='libx264', 
+            audio_codec='aac', 
+            fps=source_fps,
+            temp_audiofile=f"temp_audio_{os.path.basename(output_file)}.m4a",
+            remove_temp=True
+        )
 
         # Clean up
         final_comp.close()
