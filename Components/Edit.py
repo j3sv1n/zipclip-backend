@@ -61,6 +61,7 @@ def stitch_video_segments(input_file, segments, output_file):
         # Extract each segment as a subclip
         clips = []
         total_duration = 0
+        target_size = None
         
         for i, segment in enumerate(segments):
             # Support direct clip object OR per-segment file path
@@ -97,6 +98,24 @@ def stitch_video_segments(input_file, segments, output_file):
             
             print(f"  Extracting segment {i+1}/{len(segments)} from {os.path.basename(seg_file)}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
             clip = temp_video.subclip(start, end)
+            
+            # Ensure every segment is uniformly sized to the first segment's dimensions to avoid "top-left quarter" issues
+            if target_size is None:
+                tw, th = temp_video.size if hasattr(temp_video, 'size') else clip.size
+                if tw % 2 != 0: tw -= 1
+                if th % 2 != 0: th -= 1
+                target_size = (tw, th)
+            
+            cw, ch = clip.size
+            tw, th = target_size
+            if cw != tw or ch != th:
+                from moviepy.video.fx.all import resize, crop
+                if cw/ch > tw/th:
+                    clip = resize(clip, height=th)
+                else:
+                    clip = resize(clip, width=tw)
+                clip = crop(clip, x_center=clip.w/2, y_center=clip.h/2, width=tw, height=th)
+
             clips.append(clip)
             total_duration += (end - start)
         
@@ -473,14 +492,21 @@ def apply_background_music(video_path, music_path, transcriptions, output_path, 
         
         music = music.subclip(0, video.duration)
         
-        # Create a volume profile for the music
-        def make_ducking_filter(t):
+        # Create a volume profile for the music that safely handles arrays
+        def ducking_filter(get_frame, t):
+            t_arr = np.array(t)
+            vol = np.ones_like(t_arr, dtype=float)
             for seg in transcriptions:
-                if seg['start'] - 0.3 <= t <= seg['end'] + 0.3:
-                    return ducking_volume
-            return 1.0
+                mask = (t_arr >= seg['start'] - 0.3) & (t_arr <= seg['end'] + 0.3)
+                vol = np.where(mask, ducking_volume, vol)
+            
+            frame = get_frame(t)
+            if np.isscalar(t):
+                return frame * float(vol)
+            else:
+                return frame * vol[:, None] if len(frame.shape) > 1 else frame * vol
         
-        ducked_music = music.fl(lambda get_frame, t: make_ducking_filter(t) * get_frame(t))
+        ducked_music = music.fl(ducking_filter)
         ducked_music = ducked_music.volumex(music_volume)
         
         if video.audio:

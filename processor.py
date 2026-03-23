@@ -242,6 +242,9 @@ def process_multi_media(
         
         update_progress("Analyzing multiple media files...", 10)
         
+        # Sort files sequentially by filename so users can dictate the order
+        file_paths = sorted(file_paths, key=lambda x: os.path.basename(x))
+        
         media_metadata = []
         temp_clips = [] # Keep track of video clips generated from images
         
