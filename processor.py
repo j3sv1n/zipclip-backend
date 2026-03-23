@@ -237,6 +237,9 @@ def process_multi_media(
         os.makedirs(output_dir, exist_ok=True)
         os.makedirs(audio_dir, exist_ok=True)
         
+        # Generate final output filename
+        final_output = os.path.join(output_dir, f"coherent_{session_id}_zipped.mp4")
+        
         update_progress("Analyzing multiple media files...", 10)
         
         media_metadata = []

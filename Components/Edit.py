@@ -480,7 +480,7 @@ def apply_background_music(video_path, music_path, transcriptions, output_path, 
                     return ducking_volume
             return 1.0
         
-        ducked_music = music.fl_audio(lambda get_frame, t: make_ducking_filter(t) * get_frame(t))
+        ducked_music = music.fl(lambda get_frame, t: make_ducking_filter(t) * get_frame(t))
         ducked_music = ducked_music.volumex(music_volume)
         
         if video.audio:

@@ -19,6 +19,10 @@ def crop_to_vertical(input_video_path, output_video_path):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     vertical_height = int(original_height)
+    # libx264 requires even height and width
+    if vertical_height % 2 != 0:
+        vertical_height -= 1
+
     vertical_width = int(vertical_height * 9 / 16)
     # libx264 requires even width
     if vertical_width % 2 != 0:
@@ -68,8 +72,12 @@ def crop_to_vertical(input_video_path, output_video_path):
         use_motion_tracking = True
         x_start = 0
 
-    # Reset video to beginning
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    # Reset video to beginning by reopening (safer than cap.set which can hang on some MP4s)
+    cap.release()
+    cap = cv2.VideoCapture(input_video_path, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        print("Error: Could not reopen video.")
+        return
 
     # For screen recordings, pre-calculate scale factor
     scale = 1.0
@@ -98,8 +106,14 @@ def crop_to_vertical(input_video_path, output_video_path):
     scene_frame_ranges = [(0, total_frames)]
     scene_targets = [x_start]
 
-    # Reset to beginning for main processing loop
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    # Reset to beginning for main processing loop by reopening again just to be safe
+    # But actually, the previous loop might not have moved the frame pointer if we just reopened it.
+    # We didn't read any frames after reopening! So we don't need to reopen it again,
+    # UNLESS we read frames. Wait, we didn't. 
+    # Just to be absolute safe, let's reopen it here and remove the previous reopen if not needed.
+    # Oh, wait, the previous reopen is fine, but let's just make sure it's at frame 0.
+    cap.release()
+    cap = cv2.VideoCapture(input_video_path, cv2.CAP_FFMPEG)
 
     # scaled_width/height and scale already computed above when needed
 
