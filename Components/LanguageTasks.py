@@ -640,10 +640,11 @@ def GetCoherentHighlights(media_metadata_list, target_duration=120):
 You are a creative video editor. You have been given a collection of media files (videos and images).
 Your task is to:
 1. Identify a common theme, story, or "vibe" that connects these files together.
-2. Select 3-10 segments from across these different media files to create a coherent and engaging short video.
-3. For images, you can assume they will be shown for 3-5 seconds (they have a fixed duration in the input).
-4. For videos, select punchy segments (5-15s typically).
-5. The final result should feel like a single, well-paced story.
+2. Select segments from these different media files to create a coherent and engaging short video.
+3. CRITICAL: You MUST include at least one segment from EVERY SINGLE media file provided in the input list. Do not omit any file.
+4. For images, you can assume they will be shown for 3-5 seconds (they have a fixed duration in the input).
+5. For videos, select punchy segments (5-15s typically).
+6. The final result should feel like a single, well-paced story featuring ALL provided media files.
 
 DURATION REQUIREMENTS:
 - TARGET total duration: {target_duration} seconds.

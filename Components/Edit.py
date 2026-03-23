@@ -223,7 +223,7 @@ def stitch_video_segments(input_file, segments, output_file):
 
             from moviepy.video.VideoClip import VideoClip
 
-            mask_clip = VideoClip(lambda t: (make_mask(t) * 255).astype('uint8'), ismask=True).set_duration(duration)
+            mask_clip = VideoClip(make_mask, ismask=True).set_duration(duration)
             color_clip = ColorClip(size=size, color=color).set_duration(duration)
             color_clip = color_clip.set_mask(mask_clip)
             return color_clip
