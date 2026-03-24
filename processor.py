@@ -219,7 +219,8 @@ def process_multi_media(
     add_subtitles: bool = True,
     target_duration: int = 60,
     progress_callback: Optional[Callable[[str, int], None]] = None,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    mode: str = 'continuous'
 ) -> Dict[str, any]:
     """
     Process multiple media files (images/videos) to create a coherent short clip.
@@ -254,19 +255,18 @@ def process_multi_media(
             ext = os.path.splitext(path)[1].lower()
             is_image = ext in ['.jpg', '.jpeg', '.png', '.webp']
             
-            item = {
-                'index': i,
-                'filename': os.path.basename(path),
-                'path': path,
-                'type': 'image' if is_image else 'video'
-            }
-            
             if is_image:
-                # Analyze image with Vision GPT
-                description = analyze_frame_with_gpt(path)
-                item['visual_description'] = description
-                item['duration'] = 5.0 # Fixed duration for images in context
-                item['transcript'] = ""
+                item = {
+                    'index': len(media_metadata),
+                    'filename': os.path.basename(path),
+                    'path': path,
+                    'type': 'image',
+                    'visual_description': analyze_frame_with_gpt(path),
+                    'duration': 5.0,
+                    'transcript': "",
+                    'file_index': i
+                }
+                media_metadata.append(item)
             else:
                 # Video: Transcribe + Quick visual analysis
                 # Extract audio first
@@ -278,22 +278,51 @@ def process_multi_media(
                     if os.path.exists(audio_file): os.remove(audio_file)
                 
                 trans_text = " ".join([seg['text'] for seg in transcriptions])
-                item['transcript'] = trans_text
-                item['transcriptions_full'] = transcriptions # Store for subtitles later
                 
-                with VideoFileClip(path) as v:
-                    item['duration'] = v.duration
-                    # Analyze first and middle frames
-                    f1 = analyze_frame_with_gpt(path) # analyze_frame_with_gpt should handle video paths if we extract a frame
-                    # Actually analyze_frame_with_gpt takes a frame path. 
-                    # Let's extract a frame.
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                        v.save_frame(tmp.name, t=min(1.0, v.duration/2))
-                        v_desc = analyze_frame_with_gpt(tmp.name)
-                        os.unlink(tmp.name)
-                    item['visual_description'] = v_desc
-            
-            media_metadata.append(item)
+                if mode == 'scene_based':
+                    from Components.SceneDetection import detect_scenes, analyze_scenes_with_vision
+                    scenes = detect_scenes(path)
+                    if not scenes:
+                        from moviepy.editor import VideoFileClip
+                        with VideoFileClip(path) as v:
+                            scenes = [(0.0, v.duration)]
+                    scene_segments = analyze_scenes_with_vision(path, scenes)
+                    
+                    for s in scene_segments:
+                        item = {
+                            'index': len(media_metadata),
+                            'filename': os.path.basename(path),
+                            'path': path,
+                            'type': 'video',
+                            'duration': s['duration'],
+                            'visual_description': s.get('frame_description', ''),
+                            'transcript': trans_text, # passing full video transcript is fine for LLM context
+                            'transcriptions_full': transcriptions,
+                            'scene_start': s['scene_start'],
+                            'scene_end': s['scene_end'],
+                            'file_index': i
+                        }
+                        media_metadata.append(item)
+                else:
+                    with VideoFileClip(path) as v:
+                        duration = v.duration
+                        # Analyze first and middle frames
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                            v.save_frame(tmp.name, t=min(1.0, duration/2))
+                            v_desc = analyze_frame_with_gpt(tmp.name)
+                            os.unlink(tmp.name)
+                    item = {
+                        'index': len(media_metadata),
+                        'filename': os.path.basename(path),
+                        'path': path,
+                        'type': 'video',
+                        'duration': duration,
+                        'visual_description': v_desc,
+                        'transcript': trans_text,
+                        'transcriptions_full': transcriptions,
+                        'file_index': i
+                    }
+                    media_metadata.append(item)
         
         update_progress("Finding coherent connections between files...", 50)
         highlights_result = GetCoherentHighlights(media_metadata, target_duration=target_duration)
@@ -323,6 +352,13 @@ def process_multi_media(
                 seg['start'] = 0.0
                 seg['end'] = 5.0
                 seg_path = media['path']
+            else:
+                if 'scene_start' in media:
+                    # Map relative segment times within the scene to absolute video times
+                    seg_start_offset = seg['start']
+                    seg_end_offset = seg['end']
+                    seg['start'] = media['scene_start'] + seg_start_offset
+                    seg['end'] = min(media['scene_start'] + seg_end_offset, media['scene_end'])
             
             seg['file_path'] = seg_path
             final_segments.append(seg)
@@ -346,7 +382,7 @@ def process_multi_media(
         
         update_progress("Stitching all segments together...", 80)
         # Using None for input_file since segments have file_path
-        if not stitch_video_segments(None, final_segments, temp_stitched):
+        if not stitch_video_segments(None, final_segments, temp_stitched, theme=theme):
             return {"success": False, "error": "Failed to stitch segments"}
         
         update_progress("Finalizing video format...", 85)

@@ -29,7 +29,7 @@ def crop_video(input_file, output_file, start_time, end_time):
         cropped_video.write_videofile(output_file, codec='libx264')
 
 
-def stitch_video_segments(input_file, segments, output_file):
+def stitch_video_segments(input_file, segments, output_file, theme=None):
     """
     Extract multiple segments from a video and stitch them together.
     
@@ -37,6 +37,7 @@ def stitch_video_segments(input_file, segments, output_file):
         input_file: Path to the input video file
         segments: List of dicts with 'start' and 'end' keys, e.g. [{'start': 10.5, 'end': 25.0}, ...]
         output_file: Path for the output stitched video
+        theme: Optional string describing the video theme, used to influence transitions.
     
     Returns:
         True if successful, False otherwise
@@ -148,6 +149,8 @@ def stitch_video_segments(input_file, segments, output_file):
             except Exception:
                 return 1.0
 
+        is_celebration = theme and any(kw in theme.lower() for kw in ['birthday', 'party', 'celebration', 'festive'])
+
         # Decide transition type between two clips
         def _choose_transition(clip_a, clip_b):
             # Very short clips => hard cut
@@ -179,13 +182,19 @@ def stitch_video_segments(input_file, segments, output_file):
                 return ('fade', min(1.0, clip_a.duration/3, clip_b.duration/3))
 
             # Occasionally insert a fade even if diff is larger, to break up heavy light leaks
-            if diff < 0.50 and random.random() < 0.2:
+            # Reduce this fade probability if it's a celebration to allow more light leaks!
+            fade_prob = 0.05 if is_celebration else 0.2
+            if diff < 0.50 and random.random() < fade_prob:
                 return ('fade', min(1.0, clip_a.duration/4, clip_b.duration/4))
 
             # Very rare humorous transitions (wipe/push)
             if random.random() < 0.05:
                 choice = random.choice(['wipe','push'])
                 return (choice, min(1.0, clip_a.duration/3, clip_b.duration/3))
+
+            # If celebration, almost strictly default to light leak if it isn't a tight crossfade
+            if is_celebration and random.random() < 0.8:
+                return ('light_leak', min(0.8, clip_a.duration/3, clip_b.duration/3))
 
             # Very different -> light leak
             return ('light_leak', min(0.8, clip_a.duration/4, clip_b.duration/4))
@@ -294,6 +303,11 @@ def stitch_video_segments(input_file, segments, output_file):
                 mean_warm = (a['warm'] + b['warm']) / 2.0
 
                 # Conditions: bright & some warm tones OR saturated imagery
+                if is_celebration:
+                     # Relax conditions for celebrations by artificially boosting base scores
+                     mean_v = max(mean_v, 0.6)
+                     mean_s = max(mean_s, 0.3)
+                
                 if (mean_v > 0.55 and mean_warm > 0.06) or (mean_s > 0.25):
                     return True
                 return False
