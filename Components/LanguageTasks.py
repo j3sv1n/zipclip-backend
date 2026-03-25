@@ -11,7 +11,8 @@ if not api_key:
     raise ValueError("API key not found. Make sure it is defined in the .env file.")
 
 
-DURATION_TOLERANCE_SECONDS = 6
+MIN_DURATION_TOLERANCE_SECONDS = 2
+MAX_DURATION_TOLERANCE_SECONDS = 6
 MAX_DURATION_PLANNING_ATTEMPTS = 3
 
 class JSONResponse(BaseModel):
@@ -66,7 +67,16 @@ class CoherentMultiSegmentResponse(BaseModel):
     total_duration: float = Field(description="Total duration of all segments combined in seconds")
 
 
-def _get_duration_bounds(target_duration: int, tolerance: int = DURATION_TOLERANCE_SECONDS) -> tuple[float, float]:
+def _get_duration_tolerance(target_duration: int) -> int:
+    # Keep short targets tight, then scale up gradually for longer videos.
+    return max(
+        MIN_DURATION_TOLERANCE_SECONDS,
+        min(MAX_DURATION_TOLERANCE_SECONDS, round(target_duration * 0.10))
+    )
+
+
+def _get_duration_bounds(target_duration: int) -> tuple[float, float]:
+    tolerance = _get_duration_tolerance(target_duration)
     min_total = max(1, target_duration - tolerance)
     max_total = target_duration + tolerance
     return float(min_total), float(max_total)
