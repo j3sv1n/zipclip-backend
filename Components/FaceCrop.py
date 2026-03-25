@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 from moviepy.editor import *
 from Components.Speaker import detect_faces_and_speakers, Frames
-from Components.SceneDetection import detect_scenes
 global Fps
 
 def crop_to_vertical(input_video_path, output_video_path):
@@ -20,158 +19,101 @@ def crop_to_vertical(input_video_path, output_video_path):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     vertical_height = int(original_height)
+    # libx264 requires even height and width
+    if vertical_height % 2 != 0:
+        vertical_height -= 1
+
     vertical_width = int(vertical_height * 9 / 16)
+    # libx264 requires even width
+    if vertical_width % 2 != 0:
+        vertical_width += 1
+    
     print(f"Output dimensions: {vertical_width}x{vertical_height}")
 
     if original_width < vertical_width:
         print("Error: Original video width is less than the desired vertical width.")
         return
 
-    # Detect face position in first 30 frames to determine static crop position
-    print("Detecting face position for static crop...")
+    # Sample frames evenly across the video (up to 60 frames) to find best crop position.
+    # This replaces the old approach of calling detect_scenes() inside this function,
+    # which was redundant and caused a major slowdown (especially in scene_based mode).
+    print("Sampling frames to determine crop position...")
+    sample_count = min(60, total_frames)
+    sample_indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
+
     face_positions = []
-    for i in range(min(30, total_frames)):
+    col_scores_global = None
+
+    for idx in sample_indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ret, frame = cap.read()
         if not ret:
-            break
+            continue
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=8, minSize=(30, 30))
         if len(faces) > 0:
-            # Get largest face
             best_face = max(faces, key=lambda f: f[2] * f[3])
             x, y, w, h = best_face
-            face_center_x = x + w // 2
-            face_positions.append(face_center_x)
-    
-    # Calculate static crop position
+            face_positions.append(x + w // 2)
+
+        sobelx = np.abs(cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3))
+        col_sum = np.sum(sobelx, axis=0)
+        col_scores_global = col_sum if col_scores_global is None else col_scores_global + col_sum
+
+    # Calculate static crop position from sampled frames
     if face_positions:
-        # Use median face position for stability
         avg_face_x = int(sorted(face_positions)[len(face_positions) // 2])
-        # Offset slightly to the right to prevent right-side cutoff
-        avg_face_x += 60
+        avg_face_x += 60  # slight right offset to avoid clipping face
         x_start = max(0, min(avg_face_x - vertical_width // 2, original_width - vertical_width))
         print(f"✓ Face detected. Using face-centered crop at x={x_start}")
         use_motion_tracking = False
     else:
-        # No face detected - likely a screen recording
-        # Scale so exactly half the width is visible, then track motion
-        print(f"✗ No face detected. Using half-width with motion tracking for screen recording")
+        print("✗ No face detected. Using motion tracking for screen recording.")
         use_motion_tracking = True
-        x_start = 0  # Initial position, will be updated by tracking
-    
-    # Reset video to beginning
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        x_start = 0
 
-    # For screen recordings, pre-calculate scale factor so sampling can use scaled frames
+    # Reset video to beginning by reopening (safer than cap.set which can hang on some MP4s)
+    cap.release()
+    cap = cv2.VideoCapture(input_video_path, cv2.CAP_FFMPEG)
+    if not cap.isOpened():
+        print("Error: Could not reopen video.")
+        return
+
+    # For screen recordings, pre-calculate scale factor
     scale = 1.0
     scaled_width = original_width
     scaled_height = original_height
     if use_motion_tracking:
-        # Scale so original width fits into vertical_width (use 0.67 visible fraction)
         target_display_width = original_width * 0.67
         scale = vertical_width / target_display_width
         scaled_width = int(original_width * scale)
         scaled_height = int(original_height * scale)
-        # If scaled height exceeds vertical height, adjust scale
         if scaled_height > vertical_height:
             scale = vertical_height / original_height
             scaled_width = int(original_width * scale)
             scaled_height = int(original_height * scale)
 
         print(f"Scaling video from {original_width}x{original_height} to {scaled_width}x{scaled_height}")
-        print(f"Half-width display: showing {scaled_width//2}px wide section from {scaled_width}px scaled frame")
 
-    # Detect scenes and compute per-scene target crop positions (in source coordinates)
-    print("Detecting scenes for per-scene crop targets...")
-    try:
-        scenes = detect_scenes(input_video_path)
-    except Exception as e:
-        print(f"Scene detection failed: {e}")
-        scenes = []
+    # Determine static crop target x from global saliency (used for both modes as fallback)
+    if not face_positions and col_scores_global is not None:
+        cols = np.arange(len(col_scores_global))
+        weighted = int(np.average(cols, weights=col_scores_global))
+        x_start = max(0, min(weighted - vertical_width // 2, original_width - vertical_width))
+        print(f"Using saliency-based crop at x={x_start}")
 
-    if not scenes:
-        scenes = [(0, total_frames / fps if fps > 0 else total_frames)]
+    # Use a single static scene target for the whole clip (no per-scene scene detection)
+    scene_frame_ranges = [(0, total_frames)]
+    scene_targets = [x_start]
 
-    # Convert scene times to frame indices
-    scene_frame_ranges = []
-    for start_s, end_s in scenes:
-        start_f = int(start_s * fps)
-        end_f = int(end_s * fps)
-        start_f = max(0, min(start_f, total_frames - 1))
-        end_f = max(start_f + 1, min(end_f, total_frames))
-        scene_frame_ranges.append((start_f, end_f))
-
-    # For each scene, sample a few frames to determine best horizontal crop center
-    scene_targets = []  # target x (in original coords) for each scene
-    sample_per_scene = 5
-    for (s_f, e_f) in scene_frame_ranges:
-        sample_idxs = np.linspace(s_f, e_f - 1, min(sample_per_scene, max(1, e_f - s_f)), dtype=int)
-        face_centers = []
-        col_scores = None
-
-        for idx in sample_idxs:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-            ret, sample_frame = cap.read()
-            if not ret:
-                continue
-
-            # If scaling will be applied later for screen recordings, compute on scaled frame
-            if use_motion_tracking:
-                working_frame = cv2.resize(sample_frame, (scaled_width, scaled_height), interpolation=cv2.INTER_LANCZOS4)
-                frame_gray = cv2.cvtColor(working_frame, cv2.COLOR_BGR2GRAY)
-            else:
-                working_frame = sample_frame
-                frame_gray = cv2.cvtColor(working_frame, cv2.COLOR_BGR2GRAY)
-
-            faces = face_cascade.detectMultiScale(frame_gray, scaleFactor=1.1, minNeighbors=8, minSize=(30, 30))
-            if len(faces) > 0:
-                best_face = max(faces, key=lambda f: f[2] * f[3])
-                x, y, w, h = best_face
-                face_center_x = x + w // 2
-                # If working on scaled frame, convert back to original coordinate scale
-                if use_motion_tracking:
-                    # map scaled x back to original coordinates via scale factor
-                    orig_x = int(face_center_x / scale)
-                    face_centers.append(orig_x)
-                else:
-                    face_centers.append(face_center_x)
-
-            # Compute visual saliency-like column scores using Sobel gradient magnitude
-            sobelx = np.abs(cv2.Sobel(frame_gray, cv2.CV_64F, 1, 0, ksize=3))
-            col_sum = np.sum(sobelx, axis=0)
-            if col_scores is None:
-                col_scores = col_sum
-            else:
-                col_scores = col_scores + col_sum
-
-        # Determine target x for this scene
-        if face_centers:
-            median_face_x = int(sorted(face_centers)[len(face_centers) // 2])
-            # offset to the right slightly to avoid cropping mouth/chin
-            median_face_x += 60
-            target_x = max(0, min(median_face_x - vertical_width // 2, original_width - vertical_width))
-            scene_targets.append(target_x)
-        else:
-            if col_scores is None:
-                # fallback center
-                scene_targets.append(max(0, min(original_width // 2 - vertical_width // 2, original_width - vertical_width)))
-            else:
-                # If col_scores corresponds to scaled width, map indices to original coords
-                if use_motion_tracking:
-                    # col_scores length equals scaled_width
-                    cols = np.arange(len(col_scores))
-                    weighted = np.average(cols, weights=col_scores)
-                    motion_x_scaled = int(weighted)
-                    motion_x_orig = int(motion_x_scaled / scale)
-                    target_x = max(0, min(motion_x_orig - vertical_width // 2, original_width - vertical_width))
-                else:
-                    cols = np.arange(len(col_scores))
-                    weighted = int(np.average(cols, weights=col_scores))
-                    target_x = max(0, min(weighted - vertical_width // 2, original_width - vertical_width))
-                scene_targets.append(target_x)
-
-    # Reset to beginning for main processing loop
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    # Reset to beginning for main processing loop by reopening again just to be safe
+    # But actually, the previous loop might not have moved the frame pointer if we just reopened it.
+    # We didn't read any frames after reopening! So we don't need to reopen it again,
+    # UNLESS we read frames. Wait, we didn't. 
+    # Just to be absolute safe, let's reopen it here and remove the previous reopen if not needed.
+    # Oh, wait, the previous reopen is fine, but let's just make sure it's at frame 0.
+    cap.release()
+    cap = cv2.VideoCapture(input_video_path, cv2.CAP_FFMPEG)
 
     # scaled_width/height and scale already computed above when needed
 
@@ -323,11 +265,25 @@ def combine_videos(video_with_audio, video_without_audio, output_filename):
         clip_without_audio = VideoFileClip(video_without_audio)
 
         audio = clip_with_audio.audio
-
         combined_clip = clip_without_audio.set_audio(audio)
 
         global Fps
-        combined_clip.write_videofile(output_filename, codec='libx264', audio_codec='aac', fps=Fps, preset='medium', bitrate='3000k')
+        target_fps = Fps if Fps else 24
+        
+        print(f"  Combining video and audio ({target_fps} FPS) to {output_filename}...")
+        combined_clip.write_videofile(
+            output_filename, 
+            codec='libx264', 
+            audio_codec='aac', 
+            fps=target_fps, 
+            preset='medium', 
+            bitrate='3000k',
+            temp_audiofile=f"temp_audio_{os.path.basename(output_filename)}.m4a",
+            remove_temp=True
+        )
+        
+        clip_with_audio.close()
+        clip_without_audio.close()
         print(f"Combined video saved successfully as {output_filename}")
     
     except Exception as e:

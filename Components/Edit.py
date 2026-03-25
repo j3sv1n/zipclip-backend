@@ -29,7 +29,7 @@ def crop_video(input_file, output_file, start_time, end_time):
         cropped_video.write_videofile(output_file, codec='libx264')
 
 
-def stitch_video_segments(input_file, segments, output_file):
+def stitch_video_segments(input_file, segments, output_file, theme=None):
     """
     Extract multiple segments from a video and stitch them together.
     
@@ -37,6 +37,7 @@ def stitch_video_segments(input_file, segments, output_file):
         input_file: Path to the input video file
         segments: List of dicts with 'start' and 'end' keys, e.g. [{'start': 10.5, 'end': 25.0}, ...]
         output_file: Path for the output stitched video
+        theme: Optional string describing the video theme, used to influence transitions.
     
     Returns:
         True if successful, False otherwise
@@ -61,19 +62,25 @@ def stitch_video_segments(input_file, segments, output_file):
         # Extract each segment as a subclip
         clips = []
         total_duration = 0
+        target_size = None
         
         for i, segment in enumerate(segments):
-            # Support per-segment file path for multi-media stitching
+            # Support direct clip object OR per-segment file path
+            clip_obj = segment.get('clip')
             seg_file = segment.get('file_path', input_file)
-            if not seg_file or not os.path.exists(seg_file):
-                print(f"  Warning: File not found for segment {i+1}: {seg_file}")
-                continue
-
-            # Use cached video handle
-            try:
-                temp_video = get_video_from_cache(seg_file)
-            except Exception as e:
-                print(f"  Error opening {seg_file}: {e}")
+            
+            if clip_obj:
+                print(f"  Using direct clip object for segment {i+1}")
+                temp_video = clip_obj
+            elif seg_file and os.path.exists(seg_file):
+                # Use cached video handle
+                try:
+                    temp_video = get_video_from_cache(seg_file)
+                except Exception as e:
+                    print(f"  Error opening {seg_file}: {e}")
+                    continue
+            else:
+                print(f"  Warning: No source found for segment {i+1}")
                 continue
 
             seg_max_time = temp_video.duration - 0.1
@@ -92,6 +99,24 @@ def stitch_video_segments(input_file, segments, output_file):
             
             print(f"  Extracting segment {i+1}/{len(segments)} from {os.path.basename(seg_file)}: {start:.2f}s - {end:.2f}s ({end-start:.2f}s)")
             clip = temp_video.subclip(start, end)
+            
+            # Ensure every segment is uniformly sized to the first segment's dimensions to avoid "top-left quarter" issues
+            if target_size is None:
+                tw, th = temp_video.size if hasattr(temp_video, 'size') else clip.size
+                if tw % 2 != 0: tw -= 1
+                if th % 2 != 0: th -= 1
+                target_size = (tw, th)
+            
+            cw, ch = clip.size
+            tw, th = target_size
+            if cw != tw or ch != th:
+                from moviepy.video.fx.all import resize, crop
+                if cw/ch > tw/th:
+                    clip = resize(clip, height=th)
+                else:
+                    clip = resize(clip, width=tw)
+                clip = crop(clip, x_center=clip.w/2, y_center=clip.h/2, width=tw, height=th)
+
             clips.append(clip)
             total_duration += (end - start)
         
@@ -124,6 +149,8 @@ def stitch_video_segments(input_file, segments, output_file):
             except Exception:
                 return 1.0
 
+        is_celebration = theme and any(kw in theme.lower() for kw in ['birthday', 'party', 'celebration', 'festive'])
+
         # Decide transition type between two clips
         def _choose_transition(clip_a, clip_b):
             # Very short clips => hard cut
@@ -155,13 +182,19 @@ def stitch_video_segments(input_file, segments, output_file):
                 return ('fade', min(1.0, clip_a.duration/3, clip_b.duration/3))
 
             # Occasionally insert a fade even if diff is larger, to break up heavy light leaks
-            if diff < 0.50 and random.random() < 0.2:
+            # Reduce this fade probability if it's a celebration to allow more light leaks!
+            fade_prob = 0.05 if is_celebration else 0.2
+            if diff < 0.50 and random.random() < fade_prob:
                 return ('fade', min(1.0, clip_a.duration/4, clip_b.duration/4))
 
             # Very rare humorous transitions (wipe/push)
             if random.random() < 0.05:
                 choice = random.choice(['wipe','push'])
                 return (choice, min(1.0, clip_a.duration/3, clip_b.duration/3))
+
+            # If celebration, almost strictly default to light leak if it isn't a tight crossfade
+            if is_celebration and random.random() < 0.8:
+                return ('light_leak', min(0.8, clip_a.duration/3, clip_b.duration/3))
 
             # Very different -> light leak
             return ('light_leak', min(0.8, clip_a.duration/4, clip_b.duration/4))
@@ -199,7 +232,7 @@ def stitch_video_segments(input_file, segments, output_file):
 
             from moviepy.video.VideoClip import VideoClip
 
-            mask_clip = VideoClip(lambda t: (make_mask(t) * 255).astype('uint8'), ismask=True).set_duration(duration)
+            mask_clip = VideoClip(make_mask, ismask=True).set_duration(duration)
             color_clip = ColorClip(size=size, color=color).set_duration(duration)
             color_clip = color_clip.set_mask(mask_clip)
             return color_clip
@@ -270,6 +303,11 @@ def stitch_video_segments(input_file, segments, output_file):
                 mean_warm = (a['warm'] + b['warm']) / 2.0
 
                 # Conditions: bright & some warm tones OR saturated imagery
+                if is_celebration:
+                     # Relax conditions for celebrations by artificially boosting base scores
+                     mean_v = max(mean_v, 0.6)
+                     mean_s = max(mean_s, 0.3)
+                
                 if (mean_v > 0.55 and mean_warm > 0.06) or (mean_s > 0.25):
                     return True
                 return False
@@ -401,11 +439,28 @@ def stitch_video_segments(input_file, segments, output_file):
         all_clips = timeline_clips + overlays
         
         # Use dimensions from first clip or original video if available
-        final_size = video.size if (video and hasattr(video, 'size')) else (timeline_clips[0].w, timeline_clips[0].h)
+        w, h = video.size if (video and hasattr(video, 'size')) else (timeline_clips[0].w, timeline_clips[0].h)
+        
+        # libx264 requires even dimensions
+        if w % 2 != 0: w -= 1
+        if h % 2 != 0: h -= 1
+        final_size = (w, h)
+        
         final_comp = CompositeVideoClip(all_clips, size=final_size)
+        
+        # Get FPS from source if available
+        source_fps = video.fps if (video and hasattr(video, 'fps')) else 24
+        if not source_fps: source_fps = 24
 
-        print(f"  Writing stitched video to {output_file}...")
-        final_comp.write_videofile(output_file, codec='libx264', audio_codec='aac')
+        print(f"  Writing stitched video ({w}x{h}) at {source_fps} FPS to {output_file}...")
+        final_comp.write_videofile(
+            output_file, 
+            codec='libx264', 
+            audio_codec='aac', 
+            fps=source_fps,
+            temp_audiofile=f"temp_audio_{os.path.basename(output_file)}.m4a",
+            remove_temp=True
+        )
 
         # Clean up
         final_comp.close()
@@ -451,14 +506,21 @@ def apply_background_music(video_path, music_path, transcriptions, output_path, 
         
         music = music.subclip(0, video.duration)
         
-        # Create a volume profile for the music
-        def make_ducking_filter(t):
+        # Create a volume profile for the music that safely handles arrays
+        def ducking_filter(get_frame, t):
+            t_arr = np.array(t)
+            vol = np.ones_like(t_arr, dtype=float)
             for seg in transcriptions:
-                if seg['start'] - 0.3 <= t <= seg['end'] + 0.3:
-                    return ducking_volume
-            return 1.0
+                mask = (t_arr >= seg['start'] - 0.3) & (t_arr <= seg['end'] + 0.3)
+                vol = np.where(mask, ducking_volume, vol)
+            
+            frame = get_frame(t)
+            if np.isscalar(t):
+                return frame * float(vol)
+            else:
+                return frame * vol[:, None] if len(frame.shape) > 1 else frame * vol
         
-        ducked_music = music.fl_audio(lambda get_frame, t: make_ducking_filter(t) * get_frame(t))
+        ducked_music = music.fl(ducking_filter)
         ducked_music = ducked_music.volumex(music_volume)
         
         if video.audio:

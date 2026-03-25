@@ -627,8 +627,9 @@ def GetCoherentHighlights(media_metadata_list, target_duration=120):
     media_summary += "=" * 80 + "\n\n"
     
     for item in media_metadata_list:
+        file_idx_str = f" (Original File Index: {item.get('file_index', 'N/A')})"
         media_summary += (
-            f"Media {item['index']} ({item['type']}): {item['filename']}\n"
+            f"Media {item['index']} ({item['type']}){file_idx_str}: {item['filename']}\n"
             f"Duration: {item['duration']:.2f}s\n"
         )
         if item['type'] == 'video' and item.get('transcript'):
@@ -637,13 +638,16 @@ def GetCoherentHighlights(media_metadata_list, target_duration=120):
         media_summary += "-" * 80 + "\n\n"
     
     coherent_system = f"""
-You are a creative video editor. You have been given a collection of media files (videos and images).
+You are a creative video editor. You have been given a collection of media clips (video scenes and images).
 Your task is to:
 1. Identify a common theme, story, or "vibe" that connects these files together.
-2. Select 3-10 segments from across these different media files to create a coherent and engaging short video.
-3. For images, you can assume they will be shown for 3-5 seconds (they have a fixed duration in the input).
-4. For videos, select punchy segments (5-15s typically).
-5. The final result should feel like a single, well-paced story.
+2. Select segments from these different media items to create a coherent, intelligent, and engaging short video.
+3. CRITICAL: Items with the same 'Original File Index' come from the same original uploaded file (e.g., different scenes from one video). You MUST include at least one segment from EVERY SINGLE unique 'Original File Index' provided. You do not need to use every item/scene, but every original file must be represented.
+4. CRITICAL ORDERING: Do NOT simply output the segments in the sequential order they were provided. You must non-linearly reorder and interleave them to create a compelling, creative narrative or montage.
+5. FILTERING: Filter out unwanted elements like screen recording UI menus, scrolling contact lists, or irrelevant filler, focusing only on the important visual and narrative aspects.
+6. For images, you can assume they will be shown for 3-5 seconds (they have a fixed duration in the input).
+7. For videos, select punchy segments (5-15s typically).
+8. The final result should feel like a single, well-paced story featuring ALL provided media files.
 
 DURATION REQUIREMENTS:
 - TARGET total duration: {target_duration} seconds.

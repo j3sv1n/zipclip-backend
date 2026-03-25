@@ -135,7 +135,8 @@ def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, 
                 add_subtitles=add_subtitles,
                 target_duration=target_duration,
                 progress_callback=update_progress,
-                session_id=job_id
+                session_id=job_id,
+                mode=mode
             )
         else:
             # Single URL or local file
