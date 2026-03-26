@@ -186,6 +186,7 @@ def _parse_multi_segments(response_segments, item_label="Segment", max_segment_d
 
     return segments, total_duration
 
+
 system = """
 The input contains a timestamped transcription of a video.
 Select a 2-minute segment from the transcription that contains something interesting, useful, surprising, controversial, or thought-provoking.
@@ -314,6 +315,10 @@ The combined duration MUST land between {min_total:.0f} and {max_total:.0f} seco
 Aim as close as possible to {target_duration} seconds across all segments combined.
 Each segment should contain only complete sentences - do not cut sentences in the middle.
 Return as many segments as needed to hit the duration window cleanly.
+The FIRST segment should work as a strong hook.
+The FINAL segment must feel like a real ending: a conclusion, payoff, reaction, punchline, summary line, or natural closing beat.
+Do NOT end the final segment in the middle of a sentence, mid-thought, or right before the payoff lands.
+If needed, sacrifice a little duration earlier so the ending feels complete and satisfying.
 
 Return a JSON object with the following structure:
 {{{{
@@ -382,7 +387,8 @@ Return a JSON object with the following structure:
                 max_total,
                 extra_rules=[
                     "Keep complete thoughts and avoid cutting sentences mid-idea.",
-                    "Adjust the number of segments and their lengths so the total duration fits the required window."
+                    "Adjust the number of segments and their lengths so the total duration fits the required window.",
+                    "Make sure the first segment hooks quickly and the final segment feels like a real ending, not an abrupt cutoff."
                 ]
             )
 
@@ -456,6 +462,9 @@ Choose scenes that contain interesting, useful, surprising, controversial, or th
 The selected scenes should complement each other and tell a compelling story.
 The combined duration MUST land between {min_total:.0f} and {max_total:.0f} seconds.
 Aim as close as possible to {target_duration} seconds.
+The FIRST scene should act as a hook.
+The FINAL scene must feel like a natural ending with a sense of resolution, payoff, reaction, or conclusion.
+Do NOT end on a scene that feels like it obviously continues.
 
 Analyze the scene boundaries and transcripts, then select whole scenes (don't split them).
 Return a JSON object with the following structure:
@@ -522,7 +531,8 @@ Return a JSON object with the following structure:
                 max_total,
                 extra_rules=[
                     "Select whole scenes only.",
-                    "Change the scene count if needed so the total duration fits the required window."
+                    "Change the scene count if needed so the total duration fits the required window.",
+                    "Make the last selected scene feel like a proper ending instead of an abrupt stop."
                 ]
             )
 
@@ -600,6 +610,9 @@ DURATION REQUIREMENTS:
 - REQUIRED total duration window: {min_total:.0f} to {max_total:.0f} seconds
 - TARGET total duration: {target_duration} seconds
 - You MUST keep the final total inside that window
+- The FIRST segment should hook the viewer quickly
+- The FINAL segment must feel like a closing beat, payoff, reaction, or visual resolution
+- Do NOT end mid-action or on a moment that clearly feels unfinished
 
 Selection criteria (based on visual content):
 - Prioritize scenes with key people/moments (e.g., main subjects/couple, important interactions)
@@ -691,7 +704,8 @@ Return a JSON object with the following structure:
                 extra_rules=[
                     "Keep clips short and punchy.",
                     "Use 10s max per clip normally and only exceed that when absolutely necessary.",
-                    "Add, remove, split, or shorten scenes so the combined duration fits the required window."
+                    "Add, remove, split, or shorten scenes so the combined duration fits the required window.",
+                    "Make the last selected segment feel like a deliberate ending instead of an abrupt cutoff."
                 ]
             )
 
