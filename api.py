@@ -81,6 +81,9 @@ class ProcessRequest(BaseModel):
     subtitle_config: Optional[SubtitleConfig] = Field(None, description="Custom subtitle styling")
     llm_config: Optional[LLMConfig] = Field(None, description="LLM model and parameters for highlight selection")
     
+    # Optional natural-language editing prompt
+    user_prompt: Optional[str] = Field(None, description="Optional natural-language instructions to steer how the AI edits the video")
+
     # Return options for frontend review
     return_transcript: bool = Field(False, description="Return transcription with results")
     return_segments_preview: bool = Field(False, description="Return segment preview before final processing (experimental)")
@@ -100,6 +103,12 @@ class JobStatus(BaseModel):
     transcript: Optional[List[Dict]] = None  # Full transcript with timestamps
     processing_mode: Optional[str] = None  # The mode used for processing
     target_duration_used: Optional[int] = None  # Target duration that was used
+    user_prompt: Optional[str] = None  # The editing prompt that produced this job
+    parent_job_id: Optional[str] = None  # If this job is a refinement, the job it derives from
+
+
+class RefineRequest(BaseModel):
+    refinement_prompt: str = Field(..., description="Natural-language description of changes to apply", min_length=1)
 
 
 class JobListItem(BaseModel):
@@ -111,9 +120,9 @@ class JobListItem(BaseModel):
 
 
 # Background job processor
-def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, target_duration: int):
+def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, target_duration: int, user_prompt: Optional[str] = None):
     """Background task to process video."""
-    
+
     def update_progress(message: str, percent: int):
         """Update job progress."""
         with jobs_lock:
@@ -121,12 +130,12 @@ def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, 
                 jobs[job_id]["progress"] = percent
                 jobs[job_id]["message"] = message
                 jobs[job_id]["status"] = "processing"
-    
+
     try:
         with jobs_lock:
             jobs[job_id]["status"] = "processing"
             jobs[job_id]["message"] = "Starting processing..."
-        
+
         # Process the video
         if isinstance(input_source, list):
             # Multiple local files
@@ -136,7 +145,8 @@ def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, 
                 target_duration=target_duration,
                 progress_callback=update_progress,
                 session_id=job_id,
-                mode=mode
+                mode=mode,
+                user_prompt=user_prompt
             )
         else:
             # Single URL or local file
@@ -146,7 +156,8 @@ def process_job(job_id: str, input_source: any, mode: str, add_subtitles: bool, 
                 add_subtitles=add_subtitles,
                 target_duration=target_duration,
                 progress_callback=update_progress,
-                session_id=job_id
+                session_id=job_id,
+                user_prompt=user_prompt
             )
         
         with jobs_lock:
@@ -270,39 +281,50 @@ async def create_processing_job(
     processing_mode = mode
     process_subtitles = add_subtitles
     process_duration = target_duration
+    process_user_prompt: Optional[str] = None
     job_id = str(uuid.uuid4())[:8]
-    
+
     if files:
         # Handle file upload (one or many)
         input_source = []
         for i, file in enumerate(files):
             if file.size and file.size > UPLOAD_MAX_SIZE:
                 raise HTTPException(status_code=413, detail=f"File {file.filename} too large.")
-            
+
             file_extension = os.path.splitext(file.filename)[1] if file.filename else ".mp4"
             video_path = os.path.join(UPLOAD_DIR, f"{job_id}_{i}{file_extension}")
-            
+
             with open(video_path, "wb") as f:
                 content = await file.read()
                 f.write(content)
             input_source.append(video_path)
-            
-        # If only one file, we might still treat it as single-video if user wants, 
+
+        # If only one file, we might still treat it as single-video if user wants,
         # but the request structure now supports list.
         # If multiple files, we force 'coherent' processing if needed, but processor handles it.
         if len(input_source) == 1:
             input_source = input_source[0]
-    
+
+        # When uploading files, mode/subtitles/duration come from query params (preserves prior behaviour).
+        # user_prompt is a new field with no query-param equivalent, so it's only carried via the JSON body.
+        if parsed_request:
+            process_user_prompt = parsed_request.user_prompt
+
     elif parsed_request and parsed_request.video_url:
         # Handle URL
         input_source = parsed_request.video_url
         processing_mode = parsed_request.mode
         process_subtitles = parsed_request.add_subtitles
         process_duration = parsed_request.target_duration
-    
+        process_user_prompt = parsed_request.user_prompt
+
     else:
         raise HTTPException(status_code=400, detail="Either video_url or files must be provided")
-    
+
+    # Normalise empty/whitespace-only prompts to None
+    if process_user_prompt is not None and not str(process_user_prompt).strip():
+        process_user_prompt = None
+
     # Create job entry with additional info
     with jobs_lock:
         jobs[job_id] = {
@@ -318,9 +340,14 @@ async def create_processing_job(
             "segments": None,
             "transcript": None,
             "processing_mode": processing_mode,
-            "target_duration_used": process_duration
+            "target_duration_used": process_duration,
+            "user_prompt": process_user_prompt,
+            "parent_job_id": None,
+            # Internal-only fields for refinement support (excluded from JobStatus model)
+            "_input_source": input_source,
+            "_add_subtitles": process_subtitles,
         }
-    
+
     # Start background processing
     background_tasks.add_task(
         process_job,
@@ -328,10 +355,11 @@ async def create_processing_job(
         input_source=input_source,
         mode=processing_mode,
         add_subtitles=process_subtitles,
-        target_duration=process_duration
+        target_duration=process_duration,
+        user_prompt=process_user_prompt
     )
-    
-    return JobStatus(**jobs[job_id])
+
+    return JobStatus(**{k: v for k, v in jobs[job_id].items() if not k.startswith("_")})
 
 
 @app.get("/api/status/{job_id}", response_model=JobStatus)
@@ -340,8 +368,139 @@ async def get_job_status(job_id: str):
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
-        
-        return JobStatus(**jobs[job_id])
+
+        return JobStatus(**{k: v for k, v in jobs[job_id].items() if not k.startswith("_")})
+
+
+@app.post("/api/refine/{job_id}", response_model=JobStatus)
+async def refine_job(job_id: str, refine_request: RefineRequest, background_tasks: BackgroundTasks):
+    """
+    Create a refinement job that re-processes the same input as `job_id`
+    with an additional natural-language change request.
+    """
+    refinement_text = refine_request.refinement_prompt.strip()
+    if not refinement_text:
+        raise HTTPException(status_code=400, detail="Refinement prompt cannot be empty")
+
+    with jobs_lock:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        parent = jobs[job_id]
+
+        if parent["status"] != "completed":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Parent job not completed. Current status: {parent['status']}"
+            )
+
+        parent_input = parent.get("_input_source")
+        if parent_input is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Parent job did not preserve its input source and cannot be refined."
+            )
+
+        # Validate that uploaded files still exist on disk
+        if isinstance(parent_input, list):
+            missing = [p for p in parent_input if not os.path.exists(p)]
+            if missing:
+                raise HTTPException(
+                    status_code=410,
+                    detail=f"Original uploaded files no longer exist: {', '.join(os.path.basename(m) for m in missing)}"
+                )
+        elif isinstance(parent_input, str) and not (
+            parent_input.startswith("http://") or parent_input.startswith("https://")
+        ):
+            if not os.path.exists(parent_input):
+                raise HTTPException(
+                    status_code=410,
+                    detail="Original uploaded file no longer exists."
+                )
+
+        # Combine prior prompt (if any) with the new refinement so the LLM sees full intent
+        prior_prompt = parent.get("user_prompt")
+        if prior_prompt:
+            combined_prompt = (
+                f"Previous editing instructions: {prior_prompt}\n\n"
+                f"Requested changes after reviewing the previous result: {refinement_text}\n\n"
+                "Apply the requested changes while keeping anything from the previous instructions that the user did not contradict."
+            )
+        else:
+            combined_prompt = (
+                f"Requested changes after reviewing a previous version of this short: {refinement_text}\n\n"
+                "Adjust the segment selection so the new result reflects this feedback."
+            )
+
+        # Concurrent-job ceiling
+        active_jobs = len([j for j in jobs.values() if j["status"] in ["pending", "processing"]])
+        if active_jobs >= MAX_CONCURRENT_JOBS:
+            raise HTTPException(status_code=429, detail="Maximum concurrent jobs reached. Please try again later.")
+
+        new_job_id = str(uuid.uuid4())[:8]
+        jobs[new_job_id] = {
+            "job_id": new_job_id,
+            "status": "pending",
+            "progress": 0,
+            "message": "Refinement queued",
+            "created_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "output_file": None,
+            "error": None,
+            "video_title": parent.get("video_title"),
+            "segments": None,
+            "transcript": None,
+            "processing_mode": parent.get("processing_mode"),
+            "target_duration_used": parent.get("target_duration_used"),
+            "user_prompt": combined_prompt,
+            "parent_job_id": job_id,
+            "_input_source": parent_input,
+            "_add_subtitles": parent.get("_add_subtitles", True),
+        }
+
+        new_job_snapshot = {k: v for k, v in jobs[new_job_id].items() if not k.startswith("_")}
+
+    background_tasks.add_task(
+        process_job,
+        job_id=new_job_id,
+        input_source=parent_input,
+        mode=parent.get("processing_mode") or "continuous",
+        add_subtitles=parent.get("_add_subtitles", True),
+        target_duration=parent.get("target_duration_used") or 120,
+        user_prompt=combined_prompt
+    )
+
+    return JobStatus(**new_job_snapshot)
+
+
+@app.get("/api/preview/{job_id}")
+async def preview_result(job_id: str):
+    """Stream the processed video inline for in-browser preview."""
+    with jobs_lock:
+        if job_id not in jobs:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job = jobs[job_id]
+
+        if job["status"] != "completed":
+            raise HTTPException(status_code=400, detail=f"Job not completed. Current status: {job['status']}")
+
+        output_file = job.get("output_file")
+
+    if not output_file or not os.path.exists(output_file):
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    filename = os.path.basename(output_file)
+
+    return FileResponse(
+        path=output_file,
+        media_type="video/mp4",
+        filename=filename,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Accept-Ranges": "bytes",
+        }
+    )
 
 
 @app.get("/api/download/{job_id}")
