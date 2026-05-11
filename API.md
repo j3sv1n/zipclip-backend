@@ -12,7 +12,7 @@ http://localhost:8000
 
 ## Authentication
 
-Currently, no authentication is required. The API uses the OpenAI API key configured in the `.env` file.
+Currently, no authentication is required; the API uses the OpenAI API key configured in the `.env` file.
 
 ## Endpoints
 

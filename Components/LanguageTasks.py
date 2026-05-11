@@ -235,7 +235,7 @@ def GetHighlight(Transcription, user_prompt: Optional[str] = None):
 
     try:
         llm = ChatOpenAI(
-            model="gpt-5-nano",  # Much cheaper than gpt-4o
+            model="gpt-4o-mini",  # Much cheaper than gpt-4o
             temperature=1.0,
             api_key = api_key
         )

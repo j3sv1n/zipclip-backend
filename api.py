@@ -29,7 +29,12 @@ app = FastAPI(
 )
 
 # Configure CORS
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+if cors_origins_env == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = cors_origins_env.split(",")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -578,34 +583,12 @@ async def delete_job(job_id: str):
         return {"message": "Job deleted successfully"}
 
 
-# Serve static files from zipclip-web
-frontend_dir = os.path.join(os.path.dirname(__file__), "zipclip-web")
-if not os.path.exists(frontend_dir):
-    frontend_dir = os.path.join(os.path.dirname(__file__), "..", "zipclip-web")
-
-if os.path.exists(frontend_dir):
-    app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
-
-    @app.get("/")
-    async def serve_frontend():
-        """Serve the frontend index.html."""
-        return FileResponse(os.path.join(frontend_dir, "index.html"))
-
-    # Serve other files at the root level if they exist in the frontend dir (e.g. style.css, app.js)
-    @app.get("/{filename}")
-    async def serve_static_file(filename: str):
-        file_path = os.path.join(frontend_dir, filename)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        raise HTTPException(status_code=404, detail="File not found")
-
-
 if __name__ == "__main__":
     import uvicorn
     
     host = os.getenv("API_HOST", "0.0.0.0")
     # Hugging Face Spaces uses the PORT environment variable
-    port = int(os.getenv("PORT", os.getenv("API_PORT", "7860")))
+    port = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
     
     print(f"Starting ZipClip API server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
