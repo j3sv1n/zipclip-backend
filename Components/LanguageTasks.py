@@ -872,12 +872,12 @@ Your task is to:
 3. CRITICAL: Items with the same 'Original File Index' come from the same original uploaded file (e.g., different scenes from one video). You MUST include at least one segment from EVERY SINGLE unique 'Original File Index' provided. You do not need to use every item/scene, but every original file must be represented.
 4. CRITICAL ORDERING: Do NOT simply output the segments in the sequential order they were provided. You must non-linearly reorder and interleave them to create a compelling, creative narrative or montage.
 5. FILTERING: Filter out unwanted elements like screen recording UI menus, scrolling contact lists, or irrelevant filler, focusing only on the important visual and narrative aspects.
-6. For images, you can assume they will be shown for 3-5 seconds (they have a fixed duration in the input).
-7. For videos, select punchy segments (5-15s typically).
+6. For images, you can assume they will be shown for 1-2 seconds max.
+7. For videos, select highly engaging, fast-paced segments (2-6s typically) to retain low-attention-span viewers.
 8. The final result should feel like a single, well-paced story featuring ALL provided media files.
 
 DURATION REQUIREMENTS:
-- TARGET total duration: {target_duration} seconds.
+ TARGET total duration: {target_duration} seconds. You must be strictly close to this duration.
 - Each segment should be meaningful and follow the identified theme.
 
 Return a JSON object with the following structure:
@@ -952,7 +952,12 @@ Return a JSON object with the following structure:
             except Exception as e:
                 print(f"  Warning: Skipping invalid segment {i}: {e}")
         
-        print(f"Total duration: {response.total_duration:.2f}s")
+        # Strictly enforce target duration bounds
+        min_total, max_total = _get_duration_bounds(target_duration)
+        segments = _trim_segments_to_max_total(segments, max_total)
+        
+        total_dur = _total_segment_duration(segments)
+        print(f"Trimmed Total duration: {total_dur:.2f}s")
         print(f"{'='*60}\n")
         
         return {

@@ -113,9 +113,56 @@ def stitch_video_segments(input_file, segments, output_file, theme=None):
                 from moviepy.video.fx.all import resize, crop
                 if cw/ch > tw/th:
                     clip = resize(clip, height=th)
+                    try:
+                        frame = clip.get_frame(0)
+                        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+                        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+                        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+                        
+                        x_ratio = 0.5
+                        if len(faces) > 0:
+                            best_face = max(faces, key=lambda f: f[2] * f[3])
+                            x, y, w_f, h_f = best_face
+                            x_ratio = (x + w_f/2) / clip.w
+                        else:
+                            sobelx = np.abs(cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3))
+                            col_sum = np.sum(sobelx, axis=0)
+                            if np.sum(col_sum) > 0:
+                                weighted_x = np.average(np.arange(clip.w), weights=col_sum)
+                                x_ratio = weighted_x / clip.w
+                                
+                        target_x_center = clip.w * x_ratio
+                        target_x_center = max(tw/2, min(target_x_center, clip.w - tw/2))
+                        clip = crop(clip, x_center=target_x_center, y_center=clip.h/2, width=tw, height=th)
+                    except Exception as e:
+                        print(f"  Warning: Smart crop failed, using center crop: {e}")
+                        clip = crop(clip, x_center=clip.w/2, y_center=clip.h/2, width=tw, height=th)
                 else:
                     clip = resize(clip, width=tw)
-                clip = crop(clip, x_center=clip.w/2, y_center=clip.h/2, width=tw, height=th)
+                    try:
+                        frame = clip.get_frame(0)
+                        gray = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
+                        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+                        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+                        
+                        y_ratio = 0.5
+                        if len(faces) > 0:
+                            best_face = max(faces, key=lambda f: f[2] * f[3])
+                            x, y, w_f, h_f = best_face
+                            y_ratio = (y + h_f/3) / clip.h
+                        else:
+                            sobely = np.abs(cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3))
+                            row_sum = np.sum(sobely, axis=1)
+                            if np.sum(row_sum) > 0:
+                                weighted_y = np.average(np.arange(clip.h), weights=row_sum)
+                                y_ratio = weighted_y / clip.h
+                                
+                        target_y_center = clip.h * y_ratio
+                        target_y_center = max(th/2, min(target_y_center, clip.h - th/2))
+                        clip = crop(clip, x_center=clip.w/2, y_center=target_y_center, width=tw, height=th)
+                    except Exception as e:
+                        print(f"  Warning: Smart crop failed, using center crop: {e}")
+                        clip = crop(clip, x_center=clip.w/2, y_center=clip.h/2, width=tw, height=th)
 
             clips.append(clip)
             total_duration += (end - start)

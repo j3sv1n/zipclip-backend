@@ -265,7 +265,7 @@ def process_multi_media(
                     'path': path,
                     'type': 'image',
                     'visual_description': analyze_frame_with_gpt(path),
-                    'duration': 5.0,
+                    'duration': 2.0,
                     'transcript': "",
                     'file_index': i
                 }
@@ -350,10 +350,11 @@ def process_multi_media(
             if media['type'] == 'image':
                 # Bypass intermediate file writing for images, use direct clip
                 from moviepy.editor import ImageClip
-                ic = ImageClip(media['path']).set_duration(5.0)
+                duration = min(max(seg['end'] - seg['start'], 0.5), 2.0)
+                ic = ImageClip(media['path']).set_duration(duration)
                 seg['clip'] = ic
                 seg['start'] = 0.0
-                seg['end'] = 5.0
+                seg['end'] = duration
                 seg_path = media['path']
             else:
                 if 'scene_start' in media:
