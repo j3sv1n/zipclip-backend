@@ -189,22 +189,34 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
     # Pre-calculate segment offsets in the final stitched video
     segment_mappings = []
     current_stitched_time = 0
-    for seg in segments:
+    for i, seg in enumerate(segments):
         duration = seg['end'] - seg['start']
+        stitched_start = seg.get('stitched_start', current_stitched_time)
         segment_mappings.append({
+            'index': i,
             'global_start': seg['start'],
             'global_end': seg['end'],
-            'stitched_start': current_stitched_time,
+            'stitched_start': stitched_start,
             'duration': duration
         })
-        current_stitched_time += duration
+        current_stitched_time = stitched_start + duration
+
+    # Add max_stitched_end to each mapping to prevent subtitle overlap during video transitions
+    for i, mapping in enumerate(segment_mappings):
+        if i + 1 < len(segment_mappings):
+            mapping['max_stitched_end'] = segment_mappings[i+1]['stitched_start']
+        else:
+            mapping['max_stitched_end'] = mapping['stitched_start'] + mapping['duration']
 
     def map_to_stitched_time(global_time):
         for mapping in segment_mappings:
             # Provide a 0.5s tolerance to prevent dropping words slightly misaligned by Whisper
             if mapping['global_start'] - 0.5 <= global_time <= mapping['global_end'] + 0.5:
                 clamped_time = max(mapping['global_start'], min(global_time, mapping['global_end']))
-                return mapping['stitched_start'] + (clamped_time - mapping['global_start'])
+                stitched = mapping['stitched_start'] + (clamped_time - mapping['global_start'])
+                # Strictly prevent subtitles from bleeding into the next scene's start time
+                stitched = min(stitched, mapping['max_stitched_end'])
+                return stitched
         return None
 
     # Group transcriptions into small chunks

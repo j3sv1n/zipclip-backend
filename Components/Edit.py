@@ -328,6 +328,7 @@ def stitch_video_segments(input_file, segments, output_file, theme=None):
                 clip_start = 0.0
                 timeline_clips.append(clip.set_start(clip_start))
                 current_time = clip_start + clip.duration
+                segments[i]['stitched_start'] = clip_start
                 continue
 
             prev = raw_clips[i-1]
@@ -433,6 +434,8 @@ def stitch_video_segments(input_file, segments, output_file, theme=None):
                 clip_start = current_time
                 timeline_clips.append(clip.set_start(clip_start))
                 current_time = clip_start + clip.duration
+
+            segments[i]['stitched_start'] = clip_start
 
         # Create final composite clip
         print(f"  Creating composite timeline with {len(timeline_clips)} clips and {len(overlays)} overlays")

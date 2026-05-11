@@ -366,17 +366,6 @@ def process_multi_media(
             seg['file_path'] = seg_path
             final_segments.append(seg)
             
-            # If it's a video segment, add its transcriptions with offset
-            if media['type'] == 'video' and 'transcriptions_full' in media:
-                for t_seg in media['transcriptions_full']:
-                    # Only add transcriptions that fall within the segment range
-                    if t_seg['start'] >= seg['start'] and t_seg['end'] <= seg['end']:
-                        all_transcriptions.append({
-                            'text': t_seg['text'],
-                            'start': t_seg['start'] - seg['start'] + current_offset,
-                            'end': t_seg['end'] - seg['start'] + current_offset
-                        })
-            current_offset += (seg['end'] - seg['start'])
 
         temp_stitched = f"temp_stitched_{session_id}.mp4"
         temp_cropped = f"temp_cropped_{session_id}.mp4"
@@ -388,6 +377,36 @@ def process_multi_media(
         if not stitch_video_segments(None, final_segments, temp_stitched, theme=theme):
             return {"success": False, "error": "Failed to stitch segments"}
         
+        all_transcriptions = []
+        current_offset = 0.0
+        
+        for i, seg in enumerate(final_segments):
+            m_idx = seg['media_index']
+            media = media_metadata[m_idx]
+            stitched_start = seg.get('stitched_start', current_offset)
+            
+            max_stitched_end = None
+            if i + 1 < len(final_segments):
+                max_stitched_end = final_segments[i+1].get('stitched_start')
+            
+            if media['type'] == 'video' and 'transcriptions_full' in media:
+                for t_seg in media['transcriptions_full']:
+                    if t_seg['start'] >= seg['start'] and t_seg['end'] <= seg['end']:
+                        mapped_start = t_seg['start'] - seg['start'] + stitched_start
+                        mapped_end = t_seg['end'] - seg['start'] + stitched_start
+                        
+                        if max_stitched_end is not None:
+                            mapped_end = min(mapped_end, max_stitched_end)
+                            mapped_start = min(mapped_start, max_stitched_end)
+                            
+                        if mapped_end > mapped_start:
+                            all_transcriptions.append({
+                                'text': t_seg['text'],
+                                'start': mapped_start,
+                                'end': mapped_end
+                            })
+            current_offset = stitched_start + (seg['end'] - seg['start'])
+
         update_progress("Finalizing video format...", 85)
         crop_to_vertical(temp_stitched, temp_cropped)
         
