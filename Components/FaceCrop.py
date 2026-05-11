@@ -258,14 +258,22 @@ def crop_to_vertical(input_video_path, output_video_path):
 
 
 
-def combine_videos(video_with_audio, video_without_audio, output_filename):
+def combine_videos(video_with_audio, video_without_audio, output_filename, fade_duration=0.5):
     try:
+        from moviepy.editor import vfx
+        import moviepy.audio.fx.all as afx
+        
         # Load video clips
         clip_with_audio = VideoFileClip(video_with_audio)
         clip_without_audio = VideoFileClip(video_without_audio)
 
         audio = clip_with_audio.audio
         combined_clip = clip_without_audio.set_audio(audio)
+
+        if fade_duration > 0:
+            combined_clip = combined_clip.fx(vfx.fadein, fade_duration).fx(vfx.fadeout, fade_duration)
+            if combined_clip.audio:
+                combined_clip.audio = combined_clip.audio.fx(afx.audio_fadein, fade_duration).fx(afx.audio_fadeout, fade_duration)
 
         global Fps
         target_fps = Fps if Fps else 24
@@ -279,7 +287,8 @@ def combine_videos(video_with_audio, video_without_audio, output_filename):
             preset='medium', 
             bitrate='3000k',
             temp_audiofile=f"temp_audio_{os.path.basename(output_filename)}.m4a",
-            remove_temp=True
+            remove_temp=True,
+            ffmpeg_params=["-movflags", "faststart"]
         )
         
         clip_with_audio.close()
@@ -298,6 +307,3 @@ if __name__ == "__main__":
     detect_faces_and_speakers(input_video_path, "DecOut.mp4")
     crop_to_vertical(input_video_path, output_video_path)
     combine_videos(input_video_path, output_video_path, final_video_path)
-
-
-

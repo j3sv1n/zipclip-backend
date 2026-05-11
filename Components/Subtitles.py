@@ -5,6 +5,31 @@ import re
 import os
 from Components.Transcription import split_transcription_to_words
 
+def get_font_path():
+    """Ensure the Montserrat-ExtraBold font is available and return its path."""
+    # 1. Check if running in Hugging Face Docker where we installed it
+    docker_path = "/usr/share/fonts/Montserrat-ExtraBold.ttf"
+    if os.path.exists(docker_path):
+        return docker_path
+        
+    # 2. If running locally, download it to the local assets folder
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    fonts_dir = os.path.join(base_dir, "assets", "fonts")
+    os.makedirs(fonts_dir, exist_ok=True)
+    
+    # Use -v2 suffix to force a re-download in case the previous file was a corrupted 404 page
+    local_font_path = os.path.join(fonts_dir, "Montserrat-ExtraBold-v2.ttf")
+    if not os.path.exists(local_font_path):
+        print("Downloading Montserrat ExtraBold font for local rendering...")
+        try:
+            import urllib.request
+            url = "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf"
+            urllib.request.urlretrieve(url, local_font_path)
+        except Exception as e:
+            print(f"Warning: Failed to download font: {e}")
+            return None
+    return local_font_path
+
 def create_styled_subtitle_image(text_data, width, fontsize, font_path=None, active_word_index=None):
     """
     Create a high-quality subtitle image with modern styling and word highlighting.
@@ -149,7 +174,7 @@ def create_styled_subtitle_image(text_data, width, fontsize, font_path=None, act
     
     return img
 
-def add_subtitles_to_video(input_video, output_video, transcriptions, segments=None, video_start_time=0, words_per_subtitle=2, subtitle_offset=0.0):
+def add_subtitles_to_video(input_video, output_video, transcriptions, segments=None, video_start_time=0, words_per_subtitle=2, subtitle_offset=-0.15):
     """
     Add beautifully styled word-level subtitles to video with precise timing and highlighting.
     Supports multi-segment mapping if 'segments' is provided.
@@ -164,36 +189,44 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
     # Pre-calculate segment offsets in the final stitched video
     segment_mappings = []
     current_stitched_time = 0
-    for seg in segments:
+    for i, seg in enumerate(segments):
         duration = seg['end'] - seg['start']
+        stitched_start = seg.get('stitched_start', current_stitched_time)
         segment_mappings.append({
+            'index': i,
             'global_start': seg['start'],
             'global_end': seg['end'],
-            'stitched_start': current_stitched_time,
+            'stitched_start': stitched_start,
             'duration': duration
         })
-        current_stitched_time += duration
+        current_stitched_time = stitched_start + duration
+
+    # Add max_stitched_end to each mapping to prevent subtitle overlap during video transitions
+    for i, mapping in enumerate(segment_mappings):
+        if i + 1 < len(segment_mappings):
+            mapping['max_stitched_end'] = segment_mappings[i+1]['stitched_start']
+        else:
+            mapping['max_stitched_end'] = mapping['stitched_start'] + mapping['duration']
 
     def map_to_stitched_time(global_time):
-        global_time += subtitle_offset
         for mapping in segment_mappings:
-            if mapping['global_start'] <= global_time <= mapping['global_end']:
-                return mapping['stitched_start'] + (global_time - mapping['global_start'])
+            # Provide a 0.5s tolerance to prevent dropping words slightly misaligned by Whisper
+            if mapping['global_start'] - 0.5 <= global_time <= mapping['global_end'] + 0.5:
+                clamped_time = max(mapping['global_start'], min(global_time, mapping['global_end']))
+                stitched = mapping['stitched_start'] + (clamped_time - mapping['global_start'])
+                # Strictly prevent subtitles from bleeding into the next scene's start time
+                stitched = min(stitched, mapping['max_stitched_end'])
+                return stitched
         return None
 
     # Group transcriptions into small chunks
     word_chunks = split_transcription_to_words(transcriptions, words_per_chunk=words_per_subtitle)
     
     text_clips = []
-    # Make subtitles smaller (reduced from 8% to 5.5% of video height)
-    dynamic_fontsize = int(video.h * 0.055)
+    # Make subtitles MASSIVE and highly readable (13% of video height)
+    dynamic_fontsize = int(video.h * 0.13)
     
-    font_paths = [
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-    ]
-    font_path = next((p for p in font_paths if os.path.exists(p)), None)
+    font_path = get_font_path()
 
     print(f"Generating {len(word_chunks)} subtitle chunks with multi-segment precision...")
     
@@ -206,6 +239,10 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
         if chunk_start is None or chunk_end is None:
             continue
             
+        # Apply the offset in stitched time so it doesn't break segment bounds checking
+        chunk_start += subtitle_offset
+        chunk_end += subtitle_offset
+        
         chunk_start = max(0, chunk_start)
         chunk_end = min(video_duration, chunk_end)
         
@@ -220,6 +257,9 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
                 
                 if w_start is None or w_end is None:
                     continue
+
+                w_start += subtitle_offset
+                w_end += subtitle_offset
 
                 # Clip to chunk boundaries
                 w_start = max(chunk_start, w_start)
@@ -268,4 +308,3 @@ def add_subtitles_to_video(input_video, output_video, transcriptions, segments=N
         final_video.close()
     
     video.close()
-

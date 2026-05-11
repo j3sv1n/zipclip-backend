@@ -12,10 +12,17 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libsrtp2-dev \
     imagemagick \
+    fontconfig \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Fix ImageMagick policy for MoviePy text/subtitles
 RUN sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml || true
+
+# Download Montserrat ExtraBold directly from Google Fonts
+RUN wget -q https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf -O /usr/share/fonts/Montserrat-ExtraBold.ttf
+
+RUN fc-cache -f -v
 
 # Create a non-root user required by Hugging Face Spaces
 RUN useradd -m -u 1000 user

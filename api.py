@@ -57,7 +57,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Pydantic Models
 class SubtitleConfig(BaseModel):
     """Subtitle styling options (matching Subtitles.py defaults)"""
-    font: str = Field("Franklin-Gothic", description="Font name")
+    font: str = Field("Montserrat-ExtraBold", description="Font name")
     fontsize: int = Field(80, description="Font size in pixels", ge=20, le=200)
     color: str = Field("#2699ff", description="Text color (hex code)")
     stroke_color: str = Field("black", description="Outline color (hex code)")

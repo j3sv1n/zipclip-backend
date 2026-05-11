@@ -328,6 +328,7 @@ def stitch_video_segments(input_file, segments, output_file, theme=None):
                 clip_start = 0.0
                 timeline_clips.append(clip.set_start(clip_start))
                 current_time = clip_start + clip.duration
+                segments[i]['stitched_start'] = clip_start
                 continue
 
             prev = raw_clips[i-1]
@@ -434,6 +435,8 @@ def stitch_video_segments(input_file, segments, output_file, theme=None):
                 timeline_clips.append(clip.set_start(clip_start))
                 current_time = clip_start + clip.duration
 
+            segments[i]['stitched_start'] = clip_start
+
         # Create final composite clip
         print(f"  Creating composite timeline with {len(timeline_clips)} clips and {len(overlays)} overlays")
         all_clips = timeline_clips + overlays
@@ -486,7 +489,7 @@ def stitch_video_segments(input_file, segments, output_file, theme=None):
         traceback.print_exc()
         return False
 
-def apply_background_music(video_path, music_path, transcriptions, output_path, music_volume=0.3, voice_volume=1.0, ducking_volume=0.08):
+def apply_background_music(video_path, music_path, transcriptions, output_path, music_volume=0.3, voice_volume=1.0, ducking_volume=0.08, original_audio_path=None):
     """
     Apply background music to a video with smart ducking during dialogue.
     """
@@ -523,8 +526,15 @@ def apply_background_music(video_path, music_path, transcriptions, output_path, 
         ducked_music = music.fl(ducking_filter)
         ducked_music = ducked_music.volumex(music_volume)
         
-        if video.audio:
+        original_audio = None
+        if original_audio_path:
+            orig_video = VideoFileClip(original_audio_path)
+            if orig_video.audio:
+                original_audio = orig_video.audio.volumex(voice_volume)
+        elif video.audio:
             original_audio = video.audio.volumex(voice_volume)
+            
+        if original_audio:
             final_audio = CompositeAudioClip([original_audio, ducked_music])
         else:
             final_audio = ducked_music
@@ -534,9 +544,10 @@ def apply_background_music(video_path, music_path, transcriptions, output_path, 
         
         video.close()
         music.close()
+        if original_audio_path and 'orig_video' in locals():
+            orig_video.close()
         print(f"✓ Successfully applied background music to {output_path}")
         return True
     except Exception as e:
         print(f"Error applying background music: {e}")
         return False
-
