@@ -2,6 +2,7 @@ FROM python:3.10-slim
 
 # Install system dependencies for FFmpeg and ImageMagick
 RUN apt-get update && apt-get install -y \
+    build-essential \
     ffmpeg \
     libavdevice-dev \
     libavfilter-dev \
@@ -22,6 +23,7 @@ WORKDIR /app
 
 # Install Python requirements
 COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy all backend and frontend files to the container
