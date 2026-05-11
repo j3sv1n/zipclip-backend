@@ -126,6 +126,24 @@ def _is_within_target_window(total_duration: float, target_duration: int) -> boo
     return min_total <= total_duration <= max_total
 
 
+def _format_user_prompt(user_prompt: Optional[str]) -> str:
+    """Render an optional user-supplied editing prompt as an extra system block.
+
+    Returns an empty string when no prompt is provided so callers can safely
+    concatenate it onto an existing system message.
+    """
+    if not user_prompt or not str(user_prompt).strip():
+        return ""
+    cleaned = str(user_prompt).strip().replace("{", "{{").replace("}", "}}")
+    return (
+        "\n\nUSER EDITING INSTRUCTIONS (HIGH PRIORITY):\n"
+        f"\"\"\"\n{cleaned}\n\"\"\"\n"
+        "Treat the instructions above as the most important guidance for selection. "
+        "Adjust which segments you pick (and their boundaries) so the resulting short clearly reflects this intent. "
+        "Still respect the duration window and structural rules described earlier.\n"
+    )
+
+
 def _build_duration_retry_message(
     target_duration: int,
     actual_total: float,
@@ -212,9 +230,9 @@ Return a JSON object with the following structure:
 
 
 
-def GetHighlight(Transcription):
+def GetHighlight(Transcription, user_prompt: Optional[str] = None):
     from langchain_openai import ChatOpenAI
-    
+
     try:
         llm = ChatOpenAI(
             model="gpt-5-nano",  # Much cheaper than gpt-4o
@@ -223,10 +241,11 @@ def GetHighlight(Transcription):
         )
 
         from langchain.prompts import ChatPromptTemplate
+        system_message = system + _format_user_prompt(user_prompt)
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system",system),
-                ("user",Transcription)
+                ("system", system_message),
+                ("user", Transcription)
             ]
         )
         chain = prompt |llm.with_structured_output(JSONResponse,method="function_calling")
@@ -290,7 +309,7 @@ def GetHighlight(Transcription):
         return None, None
 
 
-def GetHighlightMultiSegment(Transcription, target_duration=120):
+def GetHighlightMultiSegment(Transcription, target_duration=120, user_prompt: Optional[str] = None):
     """
     Use LLM to select multiple important segments throughout the video
     that together form an engaging short video.
@@ -345,14 +364,15 @@ Return a JSON object with the following structure:
         )
 
         from langchain.prompts import ChatPromptTemplate
+        multi_system_with_prompt = multi_system + _format_user_prompt(user_prompt)
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", multi_system),
+                ("system", multi_system_with_prompt),
                 ("user", Transcription)
             ]
         )
         chain = prompt | llm.with_structured_output(MultiSegmentResponse, method="function_calling")
-        
+
         print(f"Calling LLM for multi-segment selection (target: {target_duration}s, window: {min_total:.0f}-{max_total:.0f}s)...")
 
         response = None
@@ -570,7 +590,7 @@ Return a JSON object with the following structure:
         return None
 
 
-def GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120):
+def GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=120, user_prompt: Optional[str] = None):
     """
     Use LLM to select important scenes based on visual analysis of what's in each scene.
     
@@ -654,14 +674,15 @@ Return a JSON object with the following structure:
         )
 
         from langchain.prompts import ChatPromptTemplate
+        scene_system_with_prompt = scene_system + _format_user_prompt(user_prompt)
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", scene_system),
+                ("system", scene_system_with_prompt),
                 ("user", "{planning_request}")
             ]
         )
         chain = prompt | llm.with_structured_output(MultiSegmentResponse, method="function_calling")
-        
+
         print(f"Calling LLM for scene selection based on visual content...")
         print(f"Target: {target_duration}s, Allowed window: {min_total:.0f}-{max_total:.0f}s")
         print(f"Max per segment: 10s (20s only for critical moments)")
@@ -746,7 +767,7 @@ Return a JSON object with the following structure:
         return None
 
 
-def GetCoherentHighlights(media_metadata_list, target_duration=120):
+def GetCoherentHighlights(media_metadata_list, target_duration=120, user_prompt: Optional[str] = None):
     """
     Identify connections between multiple media files and select segments 
     that together form a coherent short video.
@@ -823,9 +844,10 @@ Return a JSON object with the following structure:
         )
 
         from langchain.prompts import ChatPromptTemplate
+        coherent_system_with_prompt = coherent_system + _format_user_prompt(user_prompt)
         prompt = ChatPromptTemplate.from_messages(
             [
-                ("system", coherent_system),
+                ("system", coherent_system_with_prompt),
                 ("user", f"Find the best connection between these {len(media_metadata_list)} files and create a {target_duration}s coherent short.")
             ]
         )

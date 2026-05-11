@@ -36,11 +36,12 @@ def process_video(
     add_subtitles: bool = True,
     target_duration: int = 120,
     progress_callback: Optional[Callable[[str, int], None]] = None,
-    session_id: Optional[str] = None
+    session_id: Optional[str] = None,
+    user_prompt: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Process a video to create a short clip.
-    
+
     Args:
         video_url_or_path: YouTube URL or local file path
         mode: Processing mode ('continuous', 'multi_segment', 'scene_based')
@@ -48,7 +49,8 @@ def process_video(
         target_duration: Target duration in seconds
         progress_callback: Callback function(message, progress_percent)
         session_id: Unique session identifier
-    
+        user_prompt: Optional natural-language instructions to steer segment selection
+
     Returns:
         Dict with 'success', 'output_file', 'error' keys
     """
@@ -115,36 +117,36 @@ def process_video(
         
         if mode == 'continuous':
             update_progress("Finding best continuous highlight...", 55)
-            start, stop = GetHighlight(TransText)
-            
+            start, stop = GetHighlight(TransText, user_prompt=user_prompt)
+
             if start is None or stop is None:
                 return {"success": False, "error": "Failed to get highlight from LLM"}
-            
+
             segments = [{'start': start, 'end': stop}]
-        
+
         elif mode == 'multi_segment':
             update_progress("Finding multiple important segments...", 55)
-            segments = GetHighlightMultiSegment(TransText, target_duration=target_duration)
-            
+            segments = GetHighlightMultiSegment(TransText, target_duration=target_duration, user_prompt=user_prompt)
+
             if segments is None:
                 return {"success": False, "error": "Failed to get segments from LLM"}
-        
+
         elif mode == 'scene_based':
             update_progress("Detecting scenes...", 55)
             scenes = detect_scenes(Vid)
-            
+
             if not scenes:
                 return {"success": False, "error": "Failed to detect scenes"}
-            
+
             update_progress("Analyzing scene content...", 60)
             scene_segments = analyze_scenes_with_vision(Vid, scenes)
-            
+
             if not scene_segments:
                 return {"success": False, "error": "Failed to analyze scenes"}
-            
+
             update_progress("Selecting important scenes...", 65)
-            segments = GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=target_duration)
-            
+            segments = GetHighlightMultiSegmentFromFrames(scene_segments, target_duration=target_duration, user_prompt=user_prompt)
+
             if segments is None:
                 return {"success": False, "error": "Failed to select scenes from LLM"}
         
@@ -220,7 +222,8 @@ def process_multi_media(
     target_duration: int = 60,
     progress_callback: Optional[Callable[[str, int], None]] = None,
     session_id: Optional[str] = None,
-    mode: str = 'continuous'
+    mode: str = 'continuous',
+    user_prompt: Optional[str] = None
 ) -> Dict[str, any]:
     """
     Process multiple media files (images/videos) to create a coherent short clip.
@@ -325,7 +328,7 @@ def process_multi_media(
                     media_metadata.append(item)
         
         update_progress("Finding coherent connections between files...", 50)
-        highlights_result = GetCoherentHighlights(media_metadata, target_duration=target_duration)
+        highlights_result = GetCoherentHighlights(media_metadata, target_duration=target_duration, user_prompt=user_prompt)
         
         if not highlights_result or 'segments' not in highlights_result:
             return {"success": False, "error": "Failed to find coherent segments"}
