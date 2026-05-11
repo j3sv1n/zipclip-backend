@@ -23,7 +23,7 @@ def get_font_path():
         print("Downloading Montserrat ExtraBold font for local rendering...")
         try:
             import urllib.request
-            url = "https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf"
+            url = "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf"
             urllib.request.urlretrieve(url, local_font_path)
         except Exception as e:
             print(f"Warning: Failed to download font: {e}")

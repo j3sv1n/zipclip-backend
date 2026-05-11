@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y \
 RUN sed -i 's/rights="none" pattern="@\*"/rights="read|write" pattern="@*"/' /etc/ImageMagick-6/policy.xml || true
 
 # Download Montserrat ExtraBold directly from Google Fonts
-RUN wget -q https://github.com/google/fonts/raw/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf -O /usr/share/fonts/Montserrat-ExtraBold.ttf
+RUN wget -q https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static/Montserrat-ExtraBold.ttf -O /usr/share/fonts/Montserrat-ExtraBold.ttf || true
 
 RUN fc-cache -f -v
 
