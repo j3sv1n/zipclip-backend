@@ -21,12 +21,11 @@ RUN useradd -m -u 1000 user
 WORKDIR /app
 
 # Install Python requirements
-COPY zipclip-backend/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend and frontend folders and set permissions
-COPY --chown=user:user zipclip-backend/ /app/zipclip-backend/
-COPY --chown=user:user zipclip-web/ /app/zipclip-web/
+# Copy all backend and frontend files to the container
+COPY --chown=user:user . /app/zipclip-backend/
 
 USER user
 WORKDIR /app/zipclip-backend

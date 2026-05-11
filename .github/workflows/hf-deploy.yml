@@ -3,7 +3,7 @@ name: Deploy Backend to Hugging Face Spaces
 on:
   push:
     branches:
-      - main
+      - deploying
     paths:
       - '**.py'
       - 'requirements.txt'
