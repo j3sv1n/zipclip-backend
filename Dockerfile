@@ -32,4 +32,6 @@ COPY --chown=user:user . /app/zipclip-backend/
 
 USER user
 WORKDIR /app/zipclip-backend
+EXPOSE 7860
+ENV PORT=7860
 CMD ["python", "api.py"]
