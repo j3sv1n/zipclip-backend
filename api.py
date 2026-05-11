@@ -3,7 +3,7 @@ ZipClip Backend API Server
 FastAPI server for video processing with frontend integration support.
 """
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks, Header, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -224,7 +224,8 @@ async def create_processing_job(
     mode: str = "continuous",
     add_subtitles: bool = True,
     target_duration: int = 120,
-    auto_approve: bool = True
+    auto_approve: bool = True,
+    x_client_id: str = Header("anonymous")
 ):
     # Parse the JSON string form field into a ProcessRequest model.
     # If the value is not valid JSON (e.g. Swagger's "string" placeholder),
@@ -332,6 +333,7 @@ async def create_processing_job(
             # Internal-only fields for refinement support (excluded from JobStatus model)
             "_input_source": input_source,
             "_add_subtitles": process_subtitles,
+            "_client_id": x_client_id,
         }
 
     # Start background processing
@@ -349,17 +351,21 @@ async def create_processing_job(
 
 
 @app.get("/api/status/{job_id}", response_model=JobStatus)
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str, x_client_id: str = Header("anonymous")):
     """Get status of a processing job."""
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        return JobStatus(**{k: v for k, v in jobs[job_id].items() if not k.startswith("_")})
+        job = jobs[job_id]
+        if job.get("_client_id") != x_client_id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this job")
+
+        return JobStatus(**{k: v for k, v in job.items() if not k.startswith("_")})
 
 
 @app.post("/api/refine/{job_id}", response_model=JobStatus)
-async def refine_job(job_id: str, refine_request: RefineRequest, background_tasks: BackgroundTasks):
+async def refine_job(job_id: str, refine_request: RefineRequest, background_tasks: BackgroundTasks, x_client_id: str = Header("anonymous")):
     """
     Create a refinement job that re-processes the same input as `job_id`
     with an additional natural-language change request.
@@ -373,6 +379,8 @@ async def refine_job(job_id: str, refine_request: RefineRequest, background_task
             raise HTTPException(status_code=404, detail="Job not found")
 
         parent = jobs[job_id]
+        if parent.get("_client_id") != x_client_id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this job")
 
         if parent["status"] != "completed":
             raise HTTPException(
@@ -442,6 +450,7 @@ async def refine_job(job_id: str, refine_request: RefineRequest, background_task
             "parent_job_id": job_id,
             "_input_source": parent_input,
             "_add_subtitles": parent.get("_add_subtitles", True),
+            "_client_id": x_client_id,
         }
 
         new_job_snapshot = {k: v for k, v in jobs[new_job_id].items() if not k.startswith("_")}
@@ -460,13 +469,15 @@ async def refine_job(job_id: str, refine_request: RefineRequest, background_task
 
 
 @app.get("/api/preview/{job_id}")
-async def preview_result(job_id: str):
+async def preview_result(job_id: str, client_id: str = Query("anonymous")):
     """Stream the processed video inline for in-browser preview."""
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
 
         job = jobs[job_id]
+        if job.get("_client_id") != client_id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this job")
 
         if job["status"] != "completed":
             raise HTTPException(status_code=400, detail=f"Job not completed. Current status: {job['status']}")
@@ -490,13 +501,15 @@ async def preview_result(job_id: str):
 
 
 @app.get("/api/download/{job_id}")
-async def download_result(job_id: str):
+async def download_result(job_id: str, client_id: str = Query("anonymous")):
     """Download the processed video."""
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
         
         job = jobs[job_id]
+        if job.get("_client_id") != client_id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this job")
         
         if job["status"] != "completed":
             raise HTTPException(status_code=400, detail=f"Job not completed. Current status: {job['status']}")
@@ -519,10 +532,11 @@ async def download_result(job_id: str):
 
 
 @app.get("/api/jobs", response_model=List[JobListItem])
-async def list_jobs(status: Optional[str] = None, limit: int = 50):
+async def list_jobs(status: Optional[str] = None, limit: int = 50, x_client_id: str = Header("anonymous")):
     """List all jobs, optionally filtered by status."""
     with jobs_lock:
-        job_list = list(jobs.values())
+        # Filter jobs by client_id first
+        job_list = [j for j in jobs.values() if j.get("_client_id") == x_client_id]
         
         # Filter by status if provided
         if status:
@@ -548,13 +562,15 @@ async def list_jobs(status: Optional[str] = None, limit: int = 50):
 
 
 @app.delete("/api/jobs/{job_id}")
-async def delete_job(job_id: str):
+async def delete_job(job_id: str, x_client_id: str = Header("anonymous")):
     """Delete a job and its associated files."""
     with jobs_lock:
         if job_id not in jobs:
             raise HTTPException(status_code=404, detail="Job not found")
         
         job = jobs[job_id]
+        if job.get("_client_id") != x_client_id:
+            raise HTTPException(status_code=403, detail="Not authorized to access this job")
         
         # Don't delete if still processing
         if job["status"] == "processing":
