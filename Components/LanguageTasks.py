@@ -17,15 +17,9 @@ MAX_DURATION_PLANNING_ATTEMPTS = 3
 
 class JSONResponse(BaseModel):
     """
-    The response should strictly follow the following structure: -
-     [
-        {
-        start: "Start time of the clip",
-        content: "Highlight Text",
-        end: "End Time for the highlighted clip"
-        }
-     ]
+    The response should strictly follow the following structure:
     """
+    reasoning: str = Field(description="Think step-by-step about why this segment is highly engaging, has a strong hook, and a satisfying conclusion.", default="")
     start: float = Field(description="Start time of the clip")
     content: str= Field(description="Highlight Text")
     end: float = Field(description="End time for the highlighted clip")
@@ -37,6 +31,7 @@ class SegmentResponse(BaseModel):
     """
     start: float = Field(description="Start time of the segment in seconds")
     end: float = Field(description="End time of the segment in seconds")
+    role: str = Field(description="Narrative role (e.g., Hook, Build-up, Climax, Resolution)", default="Content")
     content: str = Field(description="Brief description of what makes this segment interesting")
 
 
@@ -44,6 +39,7 @@ class MultiSegmentResponse(BaseModel):
     """
     Response containing multiple segments that together form an engaging short.
     """
+    story_arc_explanation: str = Field(description="Step-by-step reasoning of how these segments create a cohesive story arc with a strong hook and satisfying resolution.", default="")
     segments: list[SegmentResponse] = Field(description="List of segments to extract and stitch together")
     total_duration: float = Field(description="Total duration of all segments combined in seconds")
 
@@ -55,6 +51,7 @@ class CoherentSegmentResponse(BaseModel):
     media_index: int = Field(description="Index of the media file in the provided list (0-based)")
     start: float = Field(description="Start time of the segment in seconds")
     end: float = Field(description="End time of the segment in seconds")
+    role: str = Field(description="Narrative role (e.g., Hook, Build-up, Climax, Resolution)", default="Content")
     content: str = Field(description="Brief description of what makes this segment interesting")
 
 
@@ -63,6 +60,7 @@ class CoherentMultiSegmentResponse(BaseModel):
     Response containing multiple segments from different media files that together form a coherent short.
     """
     theme: str = Field(description="The identified common theme or story connecting the media files")
+    story_arc_explanation: str = Field(description="Step-by-step reasoning of how these clips create a compelling narrative with a strong hook and definitive ending", default="")
     segments: list[CoherentSegmentResponse] = Field(description="List of segments from different media to stitch together")
     total_duration: float = Field(description="Total duration of all segments combined in seconds")
 
@@ -227,6 +225,7 @@ def _parse_multi_segments(response_segments, item_label="Segment", max_segment_d
             segments.append({
                 'start': start,
                 'end': end,
+                'role': getattr(segment, 'role', 'Segment'),
                 'content': segment.content
             })
             total_duration += duration
@@ -240,13 +239,18 @@ def _parse_multi_segments(response_segments, item_label="Segment", max_segment_d
 
 system = """
 The input contains a timestamped transcription of a video.
-Select a 2-minute segment from the transcription that contains something interesting, useful, surprising, controversial, or thought-provoking.
-The selected text should contain only complete sentences.
-Do not cut the sentences in the middle.
-The selected text should form a complete thought.
+Select a highly engaging segment (around 1-2 minutes) from the transcription that contains something interesting, useful, surprising, controversial, or thought-provoking.
+
+CRITICAL REQUIREMENTS:
+1. STRONG HOOK: The segment MUST start at a moment that immediately grabs attention. Do not start with boring context.
+2. NARRATIVE: The selected text should form a complete thought and tell a mini-story.
+3. DEFINITIVE ENDING: The segment MUST end with a satisfying conclusion, punchline, or resolution. DO NOT cut off mid-sentence or mid-idea.
+4. COMPLETE SENTENCES: Do not cut sentences in the middle.
+
 Return a JSON object with the following structure:
 ## Output 
 {{
+    "reasoning": "Think step-by-step. Explain the hook, the main point, and why the ending feels complete.",
     start: "Start time of the segment in seconds (number)",
     content: "The transcribed text from the selected segment (clean text only, NO timestamps)",
     end: "End time of the segment in seconds (number)"
@@ -318,6 +322,8 @@ def GetHighlight(Transcription, user_prompt: Optional[str] = None):
         print(f"\n{'='*60}")
         print(f"SELECTED SEGMENT DETAILS:")
         print(f"Time: {Start}s - {End}s ({End-Start}s duration)")
+        if hasattr(response, 'reasoning') and response.reasoning:
+            print(f"Reasoning: {response.reasoning}")
         print(f"Content: {response.content}")
         print(f"{'='*60}\n")
         
@@ -374,10 +380,12 @@ If needed, sacrifice a little duration earlier so the ending feels complete and 
 
 Return a JSON object with the following structure:
 {{{{
+    "story_arc_explanation": "Think step-by-step about the story arc. Explain the hook, the context, and the final payoff.",
     "segments": [
         {{{{
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
+            "role": "Hook | Context | Climax | Resolution",
             "content": "Brief description of what makes this segment interesting"
         }}}},
         ...
@@ -453,11 +461,14 @@ Return a JSON object with the following structure:
             total_duration = _total_segment_duration(segments)
 
         print(f"\n{'='*60}")
+        if hasattr(response, 'story_arc_explanation') and response.story_arc_explanation:
+            print(f"STORY ARC: {response.story_arc_explanation}")
         print(f"SELECTED {len(segments)} SEGMENTS:")
         print(f"{'='*60}")
         for i, segment in enumerate(segments, 1):
             duration = segment['end'] - segment['start']
-            print(f"  Segment {i}: {segment['start']:.2f}s - {segment['end']:.2f}s ({duration:.2f}s)")
+            role = segment.get('role', 'Segment')
+            print(f"  Segment {i} [{role}]: {segment['start']:.2f}s - {segment['end']:.2f}s ({duration:.2f}s)")
             print(f"    Content: {segment['content']}")
         
         print(f"\nTotal duration: {total_duration:.2f}s (target: {target_duration}s, allowed: {min_total:.0f}-{max_total:.0f}s)")
@@ -525,10 +536,12 @@ Do NOT end on a scene that feels like it obviously continues.
 Analyze the scene boundaries and transcripts, then select whole scenes (don't split them).
 Return a JSON object with the following structure:
 {{{{
+    "story_arc_explanation": "Think step-by-step about the story arc. Explain the hook, the context, and the final payoff.",
     "segments": [
         {{{{
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
+            "role": "Hook | Context | Climax | Resolution",
             "content": "Why this scene is important"
         }}}},
         ...
@@ -600,11 +613,14 @@ Return a JSON object with the following structure:
             total_duration = _total_segment_duration(segments)
 
         print(f"\n{'='*60}")
+        if hasattr(response, 'story_arc_explanation') and response.story_arc_explanation:
+            print(f"STORY ARC: {response.story_arc_explanation}")
         print(f"SELECTED {len(segments)} SCENES:")
         print(f"{'='*60}")
         for i, segment in enumerate(segments, 1):
             duration = segment['end'] - segment['start']
-            print(f"  Scene {i}: {segment['start']:.2f}s - {segment['end']:.2f}s ({duration:.2f}s)")
+            role = segment.get('role', 'Segment')
+            print(f"  Scene {i} [{role}]: {segment['start']:.2f}s - {segment['end']:.2f}s ({duration:.2f}s)")
             print(f"    Reason: {segment['content']}")
         
         print(f"\nTotal duration: {total_duration:.2f}s (target: {target_duration}s, allowed: {min_total:.0f}-{max_total:.0f}s)")
@@ -690,10 +706,12 @@ Select segments using exact start and end times. You can break up long scenes in
 
 Return a JSON object with the following structure:
 {{{{
+    "story_arc_explanation": "Think step-by-step about the story arc. Explain the hook, the context, and the final payoff.",
     "segments": [
         {{{{
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
+            "role": "Hook | Context | Climax | Resolution",
             "content": "Why this segment is important/memorable"
         }}}},
         ...
@@ -777,13 +795,16 @@ Return a JSON object with the following structure:
             total_duration = _total_segment_duration(segments)
 
         print(f"\n{'='*60}")
+        if hasattr(response, 'story_arc_explanation') and response.story_arc_explanation:
+            print(f"STORY ARC: {response.story_arc_explanation}")
         print(f"SELECTED {len(segments)} SEGMENTS:")
         print(f"{'='*60}")
         for i, segment in enumerate(segments, 1):
             duration = segment['end'] - segment['start']
+            role = segment.get('role', 'Segment')
             if duration > 10:
                 print(f"  Note: Segment {i} is {duration:.1f}s (above 10s standard, but acceptable)")
-            print(f"  Segment {i}: {segment['start']:.2f}s - {segment['end']:.2f}s ({duration:.2f}s)")
+            print(f"  Segment {i} [{role}]: {segment['start']:.2f}s - {segment['end']:.2f}s ({duration:.2f}s)")
             print(f"    Reason: {segment['content']}")
 
         print(f"\nTotal duration: {total_duration:.2f}s (target: {target_duration}s, allowed: {min_total:.0f}-{max_total:.0f}s)")
@@ -862,11 +883,13 @@ DURATION REQUIREMENTS:
 Return a JSON object with the following structure:
 {{{{
     "theme": "Description of the identified theme",
+    "story_arc_explanation": "Think step-by-step about how these selected media files form a compelling narrative arc.",
     "segments": [
         {{{{
             "media_index": <index of the media file (number)>,
             "start": <start time in seconds (number)>,
             "end": <end time in seconds (number)>,
+            "role": "Hook | Context | Climax | Resolution",
             "content": "Why this segment fits the theme"
         }}}},
         ...
@@ -910,6 +933,8 @@ Return a JSON object with the following structure:
         segments = []
         print(f"\n{'='*60}")
         print(f"IDENTIFIED THEME: {response.theme}")
+        if hasattr(response, 'story_arc_explanation') and response.story_arc_explanation:
+            print(f"STORY ARC: {response.story_arc_explanation}")
         print(f"SELECTED {len(response.segments)} SEGMENTS:")
         print(f"{'='*60}")
         
@@ -919,9 +944,10 @@ Return a JSON object with the following structure:
                     'media_index': int(segment.media_index),
                     'start': float(segment.start),
                     'end': float(segment.end),
+                    'role': getattr(segment, 'role', 'Segment'),
                     'content': segment.content
                 })
-                print(f"  Segment {i}: Media {segment.media_index} | {segment.start:.2f}s - {segment.end:.2f}s")
+                print(f"  Segment {i} [{getattr(segment, 'role', 'Segment')}]: Media {segment.media_index} | {segment.start:.2f}s - {segment.end:.2f}s")
                 print(f"    Reason: {segment.content}")
             except Exception as e:
                 print(f"  Warning: Skipping invalid segment {i}: {e}")

@@ -274,10 +274,10 @@ if Vid:
                     )
                     
                     print("Step 4/4: Adding audio to final video...")
-                    combine_videos(temp_clip, temp_subtitled, final_output)
+                    combine_videos(temp_clip, temp_subtitled, final_output, fade_duration=0.5)
                 else:
                     print("Step 3/3: Adding audio to final video (subtitles skipped)...")
-                    combine_videos(temp_clip, temp_cropped, final_output)
+                    combine_videos(temp_clip, temp_cropped, final_output, fade_duration=0.5)
                 
                 print(f"\n{'='*60}")
                 print(f"✓ SUCCESS: {final_output} is ready!")

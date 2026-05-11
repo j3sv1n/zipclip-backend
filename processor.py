@@ -180,14 +180,14 @@ def process_video(
                 temp_subtitled, 
                 transcriptions, 
                 segments=segments,
-                subtitle_offset=0.0 # Can be made configurable if needed
+                subtitle_offset=-0.15
             )
             
             update_progress("Adding audio to final video...", 90)
-            combine_videos(temp_clip, temp_subtitled, final_output)
+            combine_videos(temp_clip, temp_subtitled, final_output, fade_duration=0.5)
         else:
             update_progress("Adding audio to final video...", 90)
-            combine_videos(temp_clip, temp_cropped, final_output)
+            combine_videos(temp_clip, temp_cropped, final_output, fade_duration=0.5)
         
         update_progress("Cleaning up temporary files...", 95)
         
@@ -397,30 +397,31 @@ def process_multi_media(
         
         if music_file:
             update_progress("Applying background music with ducking...", 92)
-            if apply_background_music(temp_cropped, music_file, all_transcriptions, temp_with_music):
+            if apply_background_music(temp_cropped, music_file, all_transcriptions, temp_with_music, original_audio_path=temp_stitched):
                 ready_video = temp_with_music
+                has_mixed_audio = True
             else:
                 ready_video = temp_cropped
+                has_mixed_audio = False
         else:
             ready_video = temp_cropped
+            has_mixed_audio = False
             
         if add_subtitles and all_transcriptions:
             update_progress("Adding subtitles...", 97)
-            # add_subtitles_to_video will re-encode, so it becomes the final output
-            # We use ready_video as input because it has the mixed audio
             add_subtitles_to_video(
                 ready_video,
                 temp_subtitled,
                 all_transcriptions,
-                subtitle_offset=0.0
+                subtitle_offset=-0.15
             )
-            # Copy subtitled version to final output
-            import shutil
-            shutil.copy2(temp_subtitled, final_output)
+            final_video_source = temp_subtitled
         else:
-            # Copy ready_video (which has music + crop) to final output
-            import shutil
-            shutil.copy2(ready_video, final_output)
+            final_video_source = ready_video
+            
+        # Final step: apply fade and ensure audio is present
+        audio_source = final_video_source if has_mixed_audio else temp_stitched
+        combine_videos(audio_source, final_video_source, final_output, fade_duration=0.5)
         
         # Cleanup
         for f in [temp_stitched, temp_cropped, temp_subtitled, temp_with_music] + temp_clips:
