@@ -121,6 +121,39 @@ def _trim_segments_to_max_total(
     return trimmed_segments
 
 
+def _pad_segments_to_min_total(
+    segments: list[dict],
+    min_total: float
+) -> list[dict]:
+    if not segments:
+        return segments
+
+    current_total = _total_segment_duration(segments)
+    if current_total >= min_total:
+        return segments
+
+    shortfall = min_total - current_total
+    padded_segments = [seg.copy() for seg in segments]
+    
+    padding_per_segment = shortfall / len(padded_segments)
+    for i in range(len(padded_segments)):
+        if shortfall <= 0:
+            break
+        current_seg = padded_segments[i]
+        max_allowed_end = padded_segments[i+1]['start'] if i + 1 < len(padded_segments) else float('inf')
+        
+        available_room = max_allowed_end - current_seg['end']
+        if available_room > 0:
+            actual_pad = min(shortfall, min(padding_per_segment, available_room))
+            current_seg['end'] += actual_pad
+            shortfall -= actual_pad
+
+    if shortfall > 0 and padded_segments:
+        padded_segments[-1]['end'] += shortfall
+        
+    return padded_segments
+
+
 def _is_within_target_window(total_duration: float, target_duration: int) -> bool:
     min_total, max_total = _get_duration_bounds(target_duration)
     return min_total <= total_duration <= max_total
@@ -415,6 +448,9 @@ Return a JSON object with the following structure:
         if total_duration > max_total:
             segments = _trim_segments_to_max_total(segments, max_total)
             total_duration = _total_segment_duration(segments)
+        elif total_duration < min_total:
+            segments = _pad_segments_to_min_total(segments, min_total)
+            total_duration = _total_segment_duration(segments)
 
         print(f"\n{'='*60}")
         print(f"SELECTED {len(segments)} SEGMENTS:")
@@ -558,6 +594,9 @@ Return a JSON object with the following structure:
 
         if total_duration > max_total:
             segments = _trim_segments_to_max_total(segments, max_total)
+            total_duration = _total_segment_duration(segments)
+        elif total_duration < min_total:
+            segments = _pad_segments_to_min_total(segments, min_total)
             total_duration = _total_segment_duration(segments)
 
         print(f"\n{'='*60}")
@@ -732,6 +771,9 @@ Return a JSON object with the following structure:
 
         if total_duration > max_total:
             segments = _trim_segments_to_max_total(segments, max_total)
+            total_duration = _total_segment_duration(segments)
+        elif total_duration < min_total:
+            segments = _pad_segments_to_min_total(segments, min_total)
             total_duration = _total_segment_duration(segments)
 
         print(f"\n{'='*60}")
