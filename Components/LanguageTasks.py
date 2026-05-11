@@ -913,51 +913,114 @@ Return a JSON object with the following structure:
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", coherent_system_with_prompt),
-                ("user", f"Find the best connection between these {len(media_metadata_list)} files and create a {target_duration}s coherent short.")
+                ("user", "{planning_request}")
             ]
         )
         chain = prompt | llm.with_structured_output(CoherentMultiSegmentResponse, method="function_calling")
         
-        print(f"Calling LLM for coherent multi-media selection...")
-        response = chain.invoke({})
+        min_total, max_total = _get_duration_bounds(target_duration)
+        print(f"Calling LLM for coherent multi-media selection (target: {target_duration}s, window: {min_total:.0f}-{max_total:.0f}s)...")
         
-        # Validate response
-        if not response:
-            print("ERROR: LLM returned empty response")
-            return None
-        
-        if not hasattr(response, 'segments') or not response.segments:
-            print(f"ERROR: No segments returned")
-            return None
-        
+        response = None
         segments = []
+        total_duration = 0.0
+        user_message = f"Find the best connection between these {len(media_metadata_list)} files and create a {target_duration}s coherent short."
+        
+        for attempt in range(1, MAX_DURATION_PLANNING_ATTEMPTS + 1):
+            if attempt > 1:
+                print(f"Retrying coherent duration planning ({attempt}/{MAX_DURATION_PLANNING_ATTEMPTS})...")
+                
+            response = chain.invoke({"planning_request": user_message})
+            
+            if not response:
+                print("ERROR: LLM returned empty response")
+                return None
+            
+            if not hasattr(response, 'segments') or not response.segments:
+                print("ERROR: No segments returned")
+                return None
+            
+            segments = []
+            for i, segment in enumerate(response.segments, 1):
+                try:
+                    media_idx = int(segment.media_index)
+                    media_type = media_metadata_list[media_idx]['type'] if media_idx < len(media_metadata_list) else 'video'
+                    
+                    start = float(segment.start)
+                    end = float(segment.end)
+                    
+                    if media_type == 'image':
+                        # Strictly cap image durations so LLM calculations match actual processor output
+                        duration = min(max(end - start, 0.5), 2.0)
+                        end = start + duration
+
+                    segments.append({
+                        'media_index': media_idx,
+                        'start': start,
+                        'end': end,
+                        'role': getattr(segment, 'role', 'Segment'),
+                        'content': segment.content
+                    })
+                except Exception as e:
+                    print(f"  Warning: Skipping invalid segment {i}: {e}")
+            
+            total_duration = _total_segment_duration(segments)
+            if segments and _is_within_target_window(total_duration, target_duration):
+                break
+                
+            user_message = _build_duration_retry_message(
+                target_duration,
+                total_duration,
+                min_total,
+                max_total,
+                extra_rules=[
+                    "Make sure to include at least one segment from EVERY SINGLE original file index.",
+                    "For images, keep them strictly between 1 and 2 seconds long.",
+                    "If the video is too short, select longer segments from the video files.",
+                    "Ensure the total combined duration meets the target."
+                ]
+            )
+            
         print(f"\n{'='*60}")
         print(f"IDENTIFIED THEME: {response.theme}")
         if hasattr(response, 'story_arc_explanation') and response.story_arc_explanation:
             print(f"STORY ARC: {response.story_arc_explanation}")
-        print(f"SELECTED {len(response.segments)} SEGMENTS:")
+        print(f"SELECTED {len(segments)} SEGMENTS:")
         print(f"{'='*60}")
-        
-        for i, segment in enumerate(response.segments, 1):
-            try:
-                segments.append({
-                    'media_index': int(segment.media_index),
-                    'start': float(segment.start),
-                    'end': float(segment.end),
-                    'role': getattr(segment, 'role', 'Segment'),
-                    'content': segment.content
-                })
-                print(f"  Segment {i} [{getattr(segment, 'role', 'Segment')}]: Media {segment.media_index} | {segment.start:.2f}s - {segment.end:.2f}s")
-                print(f"    Reason: {segment.content}")
-            except Exception as e:
-                print(f"  Warning: Skipping invalid segment {i}: {e}")
+        for i, segment in enumerate(segments, 1):
+            role = segment.get('role', 'Segment')
+            print(f"  Segment {i} [{role}]: Media {segment['media_index']} | {segment['start']:.2f}s - {segment['end']:.2f}s")
+            print(f"    Reason: {segment['content']}")
         
         # Strictly enforce target duration bounds
-        min_total, max_total = _get_duration_bounds(target_duration)
-        segments = _trim_segments_to_max_total(segments, max_total)
+        if total_duration > max_total:
+            segments = _trim_segments_to_max_total(segments, max_total)
+        elif total_duration < min_total:
+            # Custom padding for coherent highlights (only pad video segments)
+            shortfall = min_total - total_duration
+            video_segments = [s for s in segments if media_metadata_list[s['media_index']]['type'] == 'video']
+            
+            if video_segments and shortfall > 0:
+                pad_per_seg = shortfall / len(video_segments)
+                for s in video_segments:
+                    media_dur = media_metadata_list[s['media_index']]['duration']
+                    available = media_dur - s['end']
+                    pad = min(pad_per_seg, available)
+                    if pad > 0:
+                        s['end'] += pad
+                        shortfall -= pad
+                
+                # If still shortfall, pad the last video segment as much as possible
+                if shortfall > 0 and video_segments:
+                    last_vid_seg = video_segments[-1]
+                    media_dur = media_metadata_list[last_vid_seg['media_index']]['duration']
+                    available = media_dur - last_vid_seg['end']
+                    pad = min(shortfall, available)
+                    if pad > 0:
+                        last_vid_seg['end'] += pad
         
         total_dur = _total_segment_duration(segments)
-        print(f"Trimmed Total duration: {total_dur:.2f}s")
+        print(f"Trimmed/Padded Total duration: {total_dur:.2f}s")
         print(f"{'='*60}\n")
         
         return {
