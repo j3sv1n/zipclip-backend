@@ -29,7 +29,12 @@ app = FastAPI(
 )
 
 # Configure CORS
-cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173").split(",")
+cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+if cors_origins_env == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = cors_origins_env.split(",")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -583,7 +588,7 @@ if __name__ == "__main__":
     
     host = os.getenv("API_HOST", "0.0.0.0")
     # Hugging Face Spaces uses the PORT environment variable
-    port = int(os.getenv("PORT", os.getenv("API_PORT", "7860")))
+    port = int(os.getenv("PORT", os.getenv("API_PORT", "8000")))
     
     print(f"Starting ZipClip API server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)

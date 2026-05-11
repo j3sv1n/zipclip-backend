@@ -46,10 +46,13 @@ jobs:
           git config user.name "GitHub Action"
           git config user.email "actions@github.com"
           
+          # Explicitly set branch name to main to avoid master/main conflicts
+          git branch -M main
+          
           # Add current files (obeying .gitignore)
           git add .
           git add .gitattributes
           git commit -m "deploy: update backend code with LFS assets"
           
-          # Force push to the 'main' branch of the Space
-          git push hf master:main -f
+          # Force push to Hugging Face
+          git push hf main -f
