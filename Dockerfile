@@ -3,6 +3,7 @@ FROM python:3.10-slim
 # Install system dependencies for FFmpeg and ImageMagick
 RUN apt-get update && apt-get install -y \
     build-essential \
+    python3-dev \
     ffmpeg \
     libavdevice-dev \
     libavfilter-dev \
